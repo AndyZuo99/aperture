@@ -73,7 +73,7 @@ public class WebullQuoteClient implements QuoteSource {
      * so the offset is accepted in all three spellings. A guarded parse that swallowed the failure
      * here would silently empty the entire price history.
      */
-    private static final DateTimeFormatter VENDOR_TIMESTAMP = new DateTimeFormatterBuilder()
+    static final DateTimeFormatter VENDOR_TIMESTAMP = new DateTimeFormatterBuilder()
             .appendPattern("yyyy-MM-dd'T'HH:mm:ss")
             .optionalStart().appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true).optionalEnd()
             .appendPattern("[XXX][XX][X]")

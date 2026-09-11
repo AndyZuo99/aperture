@@ -15,7 +15,7 @@ Java 21 · Spring Boot 3.5 · H2 + Flyway · Anthropic Java SDK · dependency-fr
 | **Corporate actions** | Splits and cash dividends, with a back-adjustment engine that restates history so a return spanning an ex-date is a real return. Three bases — unadjusted, split-adjusted, total return — selectable per chart. |
 | **Accounts** | The account holder's real Webull accounts across Production and Sandbox, with balances and positions as the broker reports them. |
 | **Tradable universe** | The securities the *selected account* can actually trade, driven by its account class: event contracts, futures, crypto or equities. |
-| **LLM analyst** | Claude with a read-only toolkit over the live services. It cannot trade, structurally. |
+| **LLM analyst** | Claude with a read-only toolkit over the live services. Answers questions, and **recommends trades** as a market entry plus a resting GTC exit. It cannot place them, structurally. |
 
 ---
 
@@ -129,6 +129,62 @@ vendor connection the section is empty and says why.
 
 ---
 
+## The trade recommender
+
+The analyst has a second mode that proposes trades in one shape: **buy now at the market, and rest
+a good-til-cancelled sell limit at a target that should clear within about a month.**
+
+The hard part is not generating a suggestion — it is making one that can be checked. So the work
+is split:
+
+| The model chooses | Aperture computes |
+|---|---|
+| Symbol, quantity, target price, horizon, reasoning | Entry price, profit, return, spread cost, historical hit rate, drawdown, reward-to-risk |
+
+The model is never asked for an expected profit. Asked for one it will produce a confident number
+that nothing verifies; asked only for a target, its proposal can be priced, tested and rejected.
+
+### What makes the target falsifiable
+
+For every overlapping historical window,
+[`TrendAnalyzer`](src/main/java/dev/aperture/analysis/TrendAnalyzer.java) asks whether the price
+**touched** a given gain within the horizon — touch, not close, because that is what fills a
+resting limit order. Measuring closes would systematically understate how often the exit actually
+gets hit.
+
+A real run, against live prices:
+
+```
+NVDA   BUY 40 MARKET  ·  SELL 40 LIMIT @ 224.90 GTC
+       entry 218.38   target 224.90   profit +260.80 (+2.99%)
+       hit rate 88% of 229 windows   median 3 sessions to hit
+       median drawdown -6.63%   reward:risk 0.45
+```
+
+That last line is the point. An 88% hit rate looks excellent until you see that reaching a 3%
+target historically meant sitting through a 6.6% drawdown — a reward-to-risk below 0.5. Both
+numbers are computed here and shown together, because a recommender that surfaced only the
+flattering one would be worse than useless.
+
+### Checks the model does not run on itself
+
+[`TradePlanner`](src/main/java/dev/aperture/ai/TradePlanner.java) marks a plan unviable when:
+
+- the target is at or below the entry — arithmetic nonsense however good the reasoning sounds;
+- the gain does not clear the spread it must cross to get in, so the position is under water the
+  moment it opens.
+
+It also flags simulated pricing, thin historical samples, and weak hit rates. The entry is the
+**ask**, not the last print, because a market buy lifts the offer.
+
+### It still cannot trade
+
+The recommender changes what the analyst *says*, not what it can *do*. `AnalystToolkit` still has
+no mutating method, `AnalystToolkitIsReadOnlyTest` still fails the build if one appears, and
+Aperture has no order-submission path at all. Recommendations are output; a human places them.
+
+---
+
 ## Architecture
 
 ```
@@ -138,6 +194,7 @@ marketdata/   QuoteSource implementations, price history, scheduler
 corporate/    CorporateAction hierarchy, PriceBasis, PriceAdjuster
 account/      Webull accounts, balances, positions, environment model
 instrument/   Instrument registry, symbol→id mapping, tradable universe + catalog
+analysis/     Forward-window hit rates, drawdowns, moving averages
 time/         Exchange calendar, session clock
 persistence/  JPA entity + repository for corporate actions
 ```
@@ -243,7 +300,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 116 tests
+mvn test        # 134 tests
 ```
 
 The ones worth reading:
@@ -262,6 +319,11 @@ The ones worth reading:
 - [`TradableUniverseTest`](src/test/java/dev/aperture/instrument/TradableUniverseTest.java) — the
   account-class mapping against every class the live account actually returns, plus the
   fallback for classes that do not exist yet.
+- [`TrendAnalyzerTest`](src/test/java/dev/aperture/analysis/TrendAnalyzerTest.java) — pins down
+  what a "hit rate" counts: a series that closes flat every day but whose highs reach the target
+  is a 100% hit rate, not 0%. Also the horizon boundary, cut deliberately on both sides.
+- [`TradePlannerTest`](src/test/java/dev/aperture/ai/TradePlannerTest.java) — that a target below
+  the entry, or a gain smaller than the spread, is rejected rather than priced.
 
 ---
 
@@ -276,9 +338,18 @@ Stated plainly, because pretending otherwise would be the more serious flaw.
   a corporate-actions vendor.
 - **The dividend calendar is forward-looking.** It does not backfill years of history, so a
   total-return series only reflects dividends within its reach.
-- **No order placement.** The wiring and the gate are here; the submission path is deliberately not.
-  Given the goal — a portfolio piece, not a trading bot — a bug reaching real money is a genuine
-  loss with no upside.
+- **No order placement.** The wiring and the gate are here; the submission path is deliberately
+  not. The recommender produces order tickets a human enters. Given the goal — a portfolio piece,
+  not a trading bot — a bug reaching real money is a genuine loss with no upside.
+- **Futures can be listed but not analysed.** `getFuturesBars` returns `403
+  MARKET_DATA_NOT_SUBSCRIBED` on this entitlement, so no historical odds can be computed for a
+  futures contract and the recommender declines to propose one. Equities, crypto and event
+  contracts all have working history.
+- **Hit rates come from overlapping windows**, which are heavily autocorrelated — 229 windows over
+  250 sessions are nothing like 229 independent trials. The window count is shown next to every
+  rate, and samples under 60 are flagged as insufficient rather than quoted.
+- **Past behaviour is not a forecast**, and the recommender says so in its own output. A target
+  reached in 88% of past windows is a statement about history, not a probability for next month.
 - **Depth is one level.** Nasdaq Basic is BBO. The touch is real and the liquidity behind it is
   invisible, which the UI states rather than rendering as an empty book.
 - **Sandbox trades on simulated fills against real prices.** Market data is always sourced from

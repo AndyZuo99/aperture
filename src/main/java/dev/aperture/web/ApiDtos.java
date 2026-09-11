@@ -209,6 +209,71 @@ public final class ApiDtos {
     public record GroupCountView(String group, int count) {
     }
 
+    /** A full recommendation run. */
+    public record RecommendationSetView(
+            boolean succeeded,
+            String commentary,
+            String account,
+            String environment,
+            boolean marketDataLive,
+            BigDecimal totalCapitalRequired,
+            List<RecommendationView> recommendations,
+            String model,
+            int turns,
+            List<String> toolCalls,
+            long elapsedMillis,
+            String error) {
+    }
+
+    /**
+     * One proposed trade.
+     *
+     * <p>The fields are grouped by who produced them, because that distinction matters to a
+     * reader: the model chose the symbol, size, target and reasoning; everything under
+     * {@code economics} was computed by Aperture from live prices and the instrument's own bars.
+     */
+    public record RecommendationView(
+            String symbol,
+            String name,
+            String universe,
+            String conviction,
+            String rationale,
+            int horizonSessions,
+            String horizon,
+            List<OrderLegView> legs,
+            EconomicsView economics) {
+    }
+
+    public record OrderLegView(
+            String side,
+            String type,
+            BigDecimal quantity,
+            BigDecimal limitPrice,
+            String timeInForce,
+            String purpose,
+            String description) {
+    }
+
+    public record EconomicsView(
+            BigDecimal entryPrice,
+            BigDecimal targetPrice,
+            BigDecimal notional,
+            BigDecimal grossProfit,
+            BigDecimal returnPercent,
+            BigDecimal spreadCostPercent,
+            BigDecimal netReturnAfterSpreadPercent,
+            BigDecimal historicalHitRatePercent,
+            Integer historicalWindows,
+            Integer medianSessionsToHit,
+            BigDecimal medianDrawdownPercent,
+            BigDecimal rewardToRisk,
+            List<String> warnings,
+            boolean viable) {
+    }
+
+    public record RecommendRequest(String environment, String accountId, BigDecimal capital) {
+    }
+
     public record AskRequest(String question) {
     }
 

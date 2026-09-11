@@ -63,6 +63,130 @@ public class WebullInstrumentClient {
         this.holder = holder;
     }
 
+    /**
+     * Daily bars for one instrument in any universe.
+     *
+     * <p>Each asset class has its own bar endpoint - {@code getBatchBars} for equities,
+     * {@code getCryptoBars}, {@code getEventBars} - and they are not interchangeable.
+     *
+     * <p>Futures are absent on purpose: {@code getFuturesBars} returns
+     * {@code 403 MARKET_DATA_NOT_SUBSCRIBED} on a Nasdaq Basic entitlement, because futures data
+     * is a separate product. Futures contracts can still be listed from reference data; they
+     * simply cannot be analysed, and an empty series here is what makes the recommender decline
+     * to propose them rather than inventing a trend.
+     */
+    public List<dev.aperture.marketdata.Bar> history(String symbol, TradableUniverse universe,
+                                                     int count) {
+        Optional<DataClient> client = holder.dataClient();
+        if (client.isEmpty() || symbol == null || symbol.isBlank()) {
+            return List.of();
+        }
+        dev.aperture.instrument.InstrumentId id =
+                dev.aperture.instrument.InstrumentId.of(symbol.toUpperCase());
+        try {
+            return switch (universe) {
+                case EQUITY -> equityHistory(client.get(), symbol, id, count);
+                case CRYPTO -> barsFrom(client.get().getCryptoBars(
+                        java.util.Set.of(symbol.toUpperCase()),
+                        Category.US_CRYPTO.name(), "D", count, Boolean.FALSE), id);
+                case EVENT -> eventHistory(client.get(), symbol, id, count);
+                case FUTURES -> List.of();
+            };
+        } catch (RuntimeException e) {
+            log.debug("History for {} ({}) unavailable: {}", symbol, universe, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private List<dev.aperture.marketdata.Bar> equityHistory(
+            DataClient client, String symbol,
+            dev.aperture.instrument.InstrumentId id, int count) {
+        var response = client.getBatchBars(List.of(symbol.toUpperCase()),
+                Category.US_STOCK.name(), "D", count);
+        if (response == null || response.getResult() == null || response.getResult().isEmpty()) {
+            return List.of();
+        }
+        return toBars(response.getResult().get(0).getResult(), id,
+                dev.aperture.corporate.PriceBasis.SPLIT_ADJUSTED);
+    }
+
+    private List<dev.aperture.marketdata.Bar> eventHistory(
+            DataClient client, String symbol,
+            dev.aperture.instrument.InstrumentId id, int count) {
+        var response = client.getEventBars(java.util.Set.of(symbol.toUpperCase()),
+                Category.US_EVENT.name(), "D", count, Boolean.FALSE);
+        if (response == null || response.isEmpty()) {
+            return List.of();
+        }
+        // Event bars come back as Kdata rather than the shared Bar type, so they are mapped
+        // separately. A binary contract never splits, so the series is RAW by definition.
+        List<dev.aperture.marketdata.Bar> bars = new ArrayList<>();
+        var kdata = response.get(0).getResult();
+        if (kdata == null) {
+            return List.of();
+        }
+        for (var k : kdata) {
+            toBar(id, k.getTime(), k.getOpen(), k.getHigh(), k.getLow(), k.getClose(),
+                    k.getVolume(), dev.aperture.corporate.PriceBasis.RAW).ifPresent(bars::add);
+        }
+        bars.sort(java.util.Comparator.comparing(dev.aperture.marketdata.Bar::sessionDate));
+        return bars;
+    }
+
+    private List<dev.aperture.marketdata.Bar> barsFrom(
+            List<com.webull.openapi.data.quotes.domain.NBar> response,
+            dev.aperture.instrument.InstrumentId id) {
+        if (response == null || response.isEmpty()) {
+            return List.of();
+        }
+        return toBars(response.get(0).getResult(), id, dev.aperture.corporate.PriceBasis.RAW);
+    }
+
+    private List<dev.aperture.marketdata.Bar> toBars(
+            List<com.webull.openapi.data.quotes.domain.Bar> vendorBars,
+            dev.aperture.instrument.InstrumentId id,
+            dev.aperture.corporate.PriceBasis basis) {
+        if (vendorBars == null) {
+            return List.of();
+        }
+        List<dev.aperture.marketdata.Bar> bars = new ArrayList<>(vendorBars.size());
+        for (var vendor : vendorBars) {
+            toBar(id, vendor.getTime(), vendor.getOpen(), vendor.getHigh(), vendor.getLow(),
+                    vendor.getClose(), vendor.getVolume(), basis).ifPresent(bars::add);
+        }
+        bars.sort(java.util.Comparator.comparing(dev.aperture.marketdata.Bar::sessionDate));
+        return bars;
+    }
+
+    private Optional<dev.aperture.marketdata.Bar> toBar(
+            dev.aperture.instrument.InstrumentId id, String time, String open, String high,
+            String low, String close, String volume,
+            dev.aperture.corporate.PriceBasis basis) {
+        java.math.BigDecimal o = WebullQuoteClient.decimal(open);
+        java.math.BigDecimal h = WebullQuoteClient.decimal(high);
+        java.math.BigDecimal l = WebullQuoteClient.decimal(low);
+        java.math.BigDecimal c = WebullQuoteClient.decimal(close);
+        if (o == null || h == null || l == null || c == null || time == null) {
+            return Optional.empty();
+        }
+        try {
+            java.time.Instant start = java.time.OffsetDateTime
+                    .parse(time, WebullQuoteClient.VENDOR_TIMESTAMP).toInstant();
+            return Optional.of(new dev.aperture.marketdata.Bar(
+                    id,
+                    start.atZone(dev.aperture.time.MarketCalendar.EXCHANGE_ZONE).toLocalDate(),
+                    dev.aperture.common.Price.of(o), dev.aperture.common.Price.of(h),
+                    dev.aperture.common.Price.of(l), dev.aperture.common.Price.of(c),
+                    dev.aperture.common.Quantity.of(
+                            WebullQuoteClient.decimal(volume) == null
+                                    ? java.math.BigDecimal.ZERO
+                                    : WebullQuoteClient.decimal(volume)),
+                    basis));
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Fetches one universe. Returns empty rather than throwing when the vendor refuses. */
     public List<TradableInstrument> fetch(TradableUniverse universe) {
         Optional<DataClient> client = holder.dataClient();

@@ -350,3 +350,64 @@ select:disabled { color: var(--text-faint); }
    like a bug rather than a closed market. */
 .universe-panel .grid tr.not-tradable td { opacity: .45; }
 .badge-halted { background: var(--bg-raised); color: var(--text-faint); }
+
+
+/* ── Analyst: recommendation mode ──────────────────────────────── */
+
+.mode-switch { display: flex; gap: 2px; margin: 12px 14px 0; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px; width: fit-content; }
+.mode-btn { background: none; border: 0; color: var(--text-dim); font: inherit; font-size: 11px;
+  padding: 5px 12px; border-radius: 4px; cursor: pointer; }
+.mode-btn:hover { color: var(--text); }
+.mode-btn.is-active { background: var(--bg-raised); color: var(--accent); }
+
+.capital-label { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-faint); }
+.capital-label input { width: 110px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 7px 9px; color: var(--text); font: inherit; font-size: 12px;
+  font-family: var(--mono); }
+.capital-label input:focus { outline: none; border-color: var(--accent); }
+
+.recommend-caveat { margin: 0 14px 12px; font-size: 11px; color: var(--text-faint);
+  line-height: 1.5; }
+
+.rec-list { display: flex; flex-direction: column; gap: 1px; background: var(--border-soft); }
+.rec-list:empty { display: none; }
+
+.rec { background: var(--bg-panel); padding: 13px 14px; }
+
+.rec-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 10px; flex-wrap: wrap; }
+.rec-symbol { font-size: 15px; font-weight: 600; }
+.rec-horizon { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+
+.conviction { font-size: 10px; font-weight: 600; letter-spacing: .4px; padding: 2px 7px;
+  border-radius: 3px; }
+.conviction-HIGH   { background: var(--up-soft); color: var(--up); }
+.conviction-MEDIUM { background: var(--accent-soft); color: var(--accent); }
+.conviction-LOW    { background: var(--bg-raised); color: var(--text-dim); }
+
+/* The two legs, shown as an order ticket would show them. */
+.rec-legs { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
+.rec-leg { display: flex; align-items: center; gap: 9px; background: var(--bg); border: 1px solid var(--border);
+  border-left-width: 3px; border-radius: 5px; padding: 7px 10px; font-family: var(--mono); font-size: 12px; }
+.rec-leg.buy  { border-left-color: var(--up); }
+.rec-leg.sell { border-left-color: var(--accent); }
+.rec-leg .leg-purpose { margin-left: auto; font-family: var(--sans); font-size: 10.5px;
+  color: var(--text-faint); }
+
+.rec-econ { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 1px;
+  background: var(--border-soft); border: 1px solid var(--border-soft); border-radius: 5px;
+  overflow: hidden; margin-bottom: 10px; }
+.econ { background: var(--bg-panel); padding: 7px 9px; }
+.econ-label { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-faint); margin-bottom: 2px; }
+.econ-value { font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+.rec-rationale { font-size: 12px; line-height: 1.55; color: var(--text-dim); }
+
+.rec-warnings { margin-top: 9px; padding: 7px 10px; background: var(--warn-soft);
+  border-radius: 4px; font-size: 11px; color: var(--warn); line-height: 1.5; }
+.rec-warnings ul { margin: 0; padding-left: 16px; }
+
+.rec.not-viable { opacity: .7; }
+.rec.not-viable .rec-symbol::after { content: ' · not viable'; font-size: 11px; font-weight: 400;
+  color: var(--down); }

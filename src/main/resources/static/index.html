@@ -194,21 +194,53 @@
       <span class="hint" id="analystHint"></span>
     </div>
 
-    <form class="ask" id="askForm">
-      <input type="text" id="askInput" autocomplete="off"
-             placeholder="Ask about the book — e.g. “Is NVDA's 12-month return real or a split?”">
-      <button type="submit" id="askButton">Ask</button>
-    </form>
-
-    <div class="suggestions" id="suggestions">
-      <button type="button" class="chip">Which watchlist name has the widest spread right now?</button>
-      <button type="button" class="chip">Compare NVDA's return unadjusted vs total return.</button>
-      <button type="button" class="chip">Summarise my account and largest position.</button>
+    <div class="mode-switch" id="analystMode" role="group" aria-label="Analyst mode">
+      <button class="mode-btn is-active" data-mode="ask">Ask</button>
+      <button class="mode-btn" data-mode="recommend">Recommend trades</button>
     </div>
 
-    <div class="answer" id="answer" hidden>
-      <div class="answer-meta" id="answerMeta"></div>
-      <div class="answer-body" id="answerBody"></div>
+    <!-- Ask mode -->
+    <div id="askMode">
+      <form class="ask" id="askForm">
+        <input type="text" id="askInput" autocomplete="off"
+               placeholder="Ask about the book — e.g. “Is NVDA's 12-month return real or a split?”">
+        <button type="submit" id="askButton">Ask</button>
+      </form>
+
+      <div class="suggestions" id="suggestions">
+        <button type="button" class="chip">Which watchlist name has the widest spread right now?</button>
+        <button type="button" class="chip">Compare NVDA's return unadjusted vs total return.</button>
+        <button type="button" class="chip">Summarise my account and largest position.</button>
+      </div>
+
+      <div class="answer" id="answer" hidden>
+        <div class="answer-meta" id="answerMeta"></div>
+        <div class="answer-body" id="answerBody"></div>
+      </div>
+    </div>
+
+    <!-- Recommend mode: market entry now, GTC exit at a target within ~a month -->
+    <div id="recommendMode" hidden>
+      <form class="ask" id="recommendForm">
+        <label class="capital-label">
+          <span>Capital</span>
+          <input type="number" id="capitalInput" value="25000" min="100" step="100">
+        </label>
+        <button type="submit" id="recommendButton">Recommend trades</button>
+      </form>
+
+      <p class="recommend-caveat">
+        Recommendations only — Aperture has no order-submission path. Entry prices, profits and
+        historical hit rates are computed here from live quotes and each instrument's own bars,
+        not taken from the model.
+      </p>
+
+      <div class="answer" id="recommendStatus" hidden>
+        <div class="answer-meta" id="recommendMeta"></div>
+        <div class="answer-body" id="recommendBody"></div>
+      </div>
+
+      <div class="rec-list" id="recList"></div>
     </div>
   </section>
 

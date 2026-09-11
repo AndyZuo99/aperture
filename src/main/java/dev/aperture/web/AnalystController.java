@@ -40,4 +40,23 @@ public class AnalystController {
     public ApiDtos.AnalysisView ask(@RequestBody ApiDtos.AskRequest request) {
         return mapper.toAnalysisView(analyst.analyse(request.question()));
     }
+
+    /**
+     * Asks for trade recommendations: a market entry now and a resting GTC exit at a target.
+     *
+     * <p>Recommendations only. Nothing here submits an order - the toolkit the model reaches has
+     * no mutating method at all, and there is no order-submission path in the application.
+     *
+     * <p>Slower than a question, since the model works through several rounds of data before it
+     * commits to anything. Still synchronous: a job queue would be more machinery than one button
+     * justifies.
+     */
+    @PostMapping("/recommend")
+    public ApiDtos.RecommendationSetView recommend(
+            @RequestBody(required = false) ApiDtos.RecommendRequest request) {
+        ApiDtos.RecommendRequest safe = request == null
+                ? new ApiDtos.RecommendRequest(null, null, null) : request;
+        return mapper.toRecommendationSetView(
+                analyst.recommend(safe.environment(), safe.accountId(), safe.capital()));
+    }
 }

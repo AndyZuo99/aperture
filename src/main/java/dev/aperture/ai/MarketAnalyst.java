@@ -12,8 +12,18 @@ import com.anthropic.models.messages.ThinkingConfigAdaptive;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlock;
+import dev.aperture.account.AccountService;
+import dev.aperture.account.BrokerAccount;
+import dev.aperture.account.TradingEnvironment;
+import dev.aperture.common.Money;
+import dev.aperture.common.Price;
+import dev.aperture.common.Quantity;
 import dev.aperture.config.ApertureProperties;
+import dev.aperture.instrument.TradableUniverse;
+import dev.aperture.marketdata.MarketDataService;
 import dev.aperture.time.MarketClock;
+import java.math.BigDecimal;
+import java.util.Optional;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -76,15 +86,24 @@ public class MarketAnalyst {
             """;
 
     private final AnalystToolkit toolkit;
+    private final TradePlanner planner;
+    private final AccountService accounts;
+    private final MarketDataService marketData;
     private final ApertureProperties.Analyst config;
     private final MarketClock clock;
     private final AnthropicClient client;
 
     public MarketAnalyst(AnalystToolkit toolkit,
+                         TradePlanner planner,
+                         AccountService accounts,
+                         MarketDataService marketData,
                          ApertureProperties properties,
                          MarketClock clock,
                          @Autowired(required = false) @Nullable AnthropicClient client) {
         this.toolkit = toolkit;
+        this.planner = planner;
+        this.accounts = accounts;
+        this.marketData = marketData;
         this.config = properties.analyst();
         this.clock = clock;
         this.client = client;
@@ -189,11 +208,265 @@ public class MarketAnalyst {
         }
     }
 
+    private static final String RECOMMENDATION_PROMPT = """
+            You are the trade recommender inside Aperture, a live equities console.
+
+            Propose trades in exactly one shape: BUY NOW AT THE MARKET, and rest a \
+            GOOD-TIL-CANCELLED SELL LIMIT at a target that nets a profit within roughly a month. \
+            No shorts, no options, no averaging in - one entry, one exit.
+
+            How to work:
+
+            1. START WITH rank_candidates. One call ranks everything with loaded history by how \
+            often a given gain was actually reached inside the horizon. Checking symbols one at a \
+            time costs a vendor request each against a rate-limited API.
+
+            2. CHECK WHAT THE ACCOUNT CAN TRADE with get_tradable_universe before proposing \
+            anything. An Events account cannot buy stocks. Never recommend futures: that data is \
+            a separate entitlement this account does not have, so no target could be justified.
+
+            3. JUSTIFY THE TARGET FROM THE HIT RATE. get_trend_statistics tells you how often \
+            each gain was touched within the horizon. Pick a target with a hit rate you would \
+            actually stand behind, and say what it is. A target reached in 20% of past windows is \
+            a bad trade however good the story sounds.
+
+            4. RESPECT THE DRAWDOWN. Every window has a worst point. A 5% target that historically \
+            required sitting through a 9% drawdown is a different proposition from one that never \
+            went more than 2% against you. Say which you are proposing.
+
+            5. SIZE IT. Keep the total cost of all recommendations inside the stated capital, and \
+            do not put everything into one name.
+
+            6. BEING SELECTIVE IS THE JOB. Two well-evidenced trades beat six speculative ones. \
+            If nothing clears the bar, submit an empty list and say why - that is a valid and \
+            often correct answer.
+
+            What NOT to do:
+
+            - Do not state expected profits, percentage returns or reward-to-risk. Aperture \
+            computes those from live prices and rejects plans whose target is below the entry or \
+            whose gain does not clear the spread. Give the target; the arithmetic is not yours.
+            - Do not rely on what you remember about these companies. Your training data is not \
+            today's market. Every claim must come from a tool call in this conversation.
+            - Do not present simulated data as live. Check the dataSource field.
+
+            Finish by calling submit_recommendations exactly once.
+            """;
+
+    /**
+     * Runs the recommender.
+     *
+     * @param capital the most the recommendations may commit in total; falls back to the
+     *     account's own buying power when not supplied
+     */
+    public RecommendationSet recommend(String environmentName, String accountId,
+                                       BigDecimal capital) {
+        Instant started = clock.now();
+        if (client == null) {
+            return RecommendationSet.unavailable(
+                    "The analyst is not configured. Set ANTHROPIC_API_KEY to enable it.",
+                    clock.now());
+        }
+
+        TradingEnvironment environment = environmentName == null || environmentName.isBlank()
+                ? accounts.defaultEnvironment()
+                : TradingEnvironment.parseOrSandbox(environmentName);
+        Optional<BrokerAccount> account = accountId == null || accountId.isBlank()
+                ? accounts.defaultAccount(environment)
+                : accounts.findAccount(environment, accountId);
+
+        TradableUniverse universe = account
+                .map(a -> TradableUniverse.forAccountClass(a.accountClass()))
+                .orElse(TradableUniverse.EQUITY);
+
+        Money budget = resolveBudget(account, capital);
+
+        List<String> toolCalls = new ArrayList<>();
+        List<MessageParam> conversation = new ArrayList<>();
+        conversation.add(MessageParam.builder()
+                .role(MessageParam.Role.USER)
+                .content(openingBrief(environment, account, universe, budget))
+                .build());
+
+        int turns = 0;
+        try {
+            while (turns < config.maxToolIterations()) {
+                turns++;
+                Message response = client.messages().create(
+                        paramsFor(conversation, RECOMMENDATION_PROMPT,
+                                AnalystTools.FOR_RECOMMENDATIONS));
+
+                StopReason stopReason = response.stopReason().orElse(null);
+                if (StopReason.REFUSAL.equals(stopReason)) {
+                    return RecommendationSet.failure("The model declined this request.",
+                            config.model(), turns, toolCalls,
+                            Duration.between(started, clock.now()), clock.now());
+                }
+                if (!StopReason.TOOL_USE.equals(stopReason)) {
+                    // It stopped without submitting. Return what it said rather than nothing.
+                    return new RecommendationSet(true, List.of(), textOf(response), Money.zero(),
+                            account.map(BrokerAccount::displayName).orElse(""),
+                            environment.label(), marketData.status().provenance().isLive(),
+                            config.model(), turns, toolCalls,
+                            Duration.between(started, clock.now()), clock.now(), null);
+                }
+
+                conversation.add(response.toParam());
+
+                List<ContentBlockParam> results = new ArrayList<>();
+                for (ContentBlock block : response.content()) {
+                    if (block.toolUse().isEmpty()) {
+                        continue;
+                    }
+                    ToolUseBlock toolUse = block.toolUse().get();
+                    toolCalls.add(toolUse.name());
+
+                    if ("submit_recommendations".equals(toolUse.name())) {
+                        return build(toolUse, universe, environment, account, budget,
+                                textOf(response), turns, toolCalls, started);
+                    }
+                    results.add(ContentBlockParam.ofToolResult(ToolResultBlockParam.builder()
+                            .toolUseId(toolUse.id())
+                            .content(execute(toolUse))
+                            .build()));
+                }
+                if (results.isEmpty()) {
+                    return RecommendationSet.failure(
+                            "The model stopped without submitting any recommendations.",
+                            config.model(), turns, toolCalls,
+                            Duration.between(started, clock.now()), clock.now());
+                }
+                conversation.add(MessageParam.builder()
+                        .role(MessageParam.Role.USER)
+                        .contentOfBlockParams(results)
+                        .build());
+            }
+            return RecommendationSet.failure(
+                    "The recommender was still gathering data after " + config.maxToolIterations()
+                            + " rounds and was stopped.",
+                    config.model(), turns, toolCalls,
+                    Duration.between(started, clock.now()), clock.now());
+        } catch (RuntimeException e) {
+            log.warn("Recommendation run failed: {}", e.getMessage());
+            return RecommendationSet.failure(describe(e), config.model(), turns, toolCalls,
+                    Duration.between(started, clock.now()), clock.now());
+        }
+    }
+
+    /**
+     * Prices every proposal and assembles the result.
+     *
+     * <p>Each proposal goes through {@link TradePlanner}, which computes the entry, the profit and
+     * the historical odds from the data. A proposal naming an unquotable symbol is dropped rather
+     * than shown with invented numbers.
+     */
+    private RecommendationSet build(ToolUseBlock toolUse, TradableUniverse accountUniverse,
+                                    TradingEnvironment environment,
+                                    Optional<BrokerAccount> account, Money budget,
+                                    String commentaryText, int turns, List<String> toolCalls,
+                                    Instant started) {
+        Map<String, Object> payload = arguments(toolUse);
+        String commentary = payload.get("commentary") instanceof String text
+                ? text : commentaryText;
+
+        List<TradeRecommendation> planned = new ArrayList<>();
+        Money committed = Money.zero();
+
+        Object raw = payload.get("recommendations");
+        if (raw instanceof List<?> proposals) {
+            for (Object element : proposals) {
+                if (!(element instanceof Map<?, ?> proposal)) {
+                    continue;
+                }
+                String symbol = string(proposal.get("symbol"));
+                if (symbol == null || symbol.isBlank()) {
+                    continue;
+                }
+                BigDecimal quantity = decimal(proposal.get("quantity"));
+                BigDecimal target = decimal(proposal.get("targetPrice"));
+                if (quantity == null || quantity.signum() <= 0 || target == null
+                        || target.signum() <= 0) {
+                    continue;
+                }
+                TradableUniverse universe = proposal.get("universe") == null
+                        ? accountUniverse
+                        : AnalystToolkit.parseUniverse(string(proposal.get("universe")));
+
+                planner.plan(symbol, symbol, universe, Quantity.of(quantity), Price.of(target),
+                                integer(proposal.get("horizonSessions"), 21),
+                                string(proposal.get("conviction")),
+                                string(proposal.get("rationale")))
+                        .ifPresent(planned::add);
+            }
+        }
+        for (TradeRecommendation recommendation : planned) {
+            committed = committed.plus(recommendation.economics().notional());
+        }
+        if (committed.isGreaterThan(budget) && budget.isPositive()) {
+            commentary = commentary + "\n\nNote: these recommendations commit "
+                    + committed.toDisplay().toPlainString() + ", which exceeds the "
+                    + budget.toDisplay().toPlainString() + " available.";
+        }
+
+        return new RecommendationSet(true, planned, commentary, committed,
+                account.map(BrokerAccount::displayName).orElse(""), environment.label(),
+                marketData.status().provenance().isLive(), config.model(), turns, toolCalls,
+                Duration.between(started, clock.now()), clock.now(), null);
+    }
+
+    private Money resolveBudget(Optional<BrokerAccount> account, BigDecimal capital) {
+        if (capital != null && capital.signum() > 0) {
+            return Money.usd(capital);
+        }
+        return account.map(accounts::balance)
+                .flatMap(balance -> balance.buyingPower().or(balance::totalCash))
+                .orElse(Money.usd(BigDecimal.valueOf(10_000)));
+    }
+
+    private String openingBrief(TradingEnvironment environment, Optional<BrokerAccount> account,
+                                TradableUniverse universe, Money budget) {
+        return """
+                Recommend trades for this account.
+
+                Account: %s
+                Environment: %s
+                Tradable universe: %s
+                Capital available: %s
+                Today: %s
+
+                Find entries worth taking now, each with a target that history says is reachable                 within about a month. Work from the tools, not from memory.
+                """.formatted(
+                account.map(BrokerAccount::displayName).orElse("(none selected)"),
+                environment.label(),
+                universe.label(),
+                budget.toDisplay().toPlainString(),
+                clock.today());
+    }
+
+    private static BigDecimal decimal(Object value) {
+        if (value instanceof Number number) {
+            return new BigDecimal(number.toString());
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return new BigDecimal(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     private MessageCreateParams paramsFor(List<MessageParam> conversation) {
+        return paramsFor(conversation, SYSTEM_PROMPT, AnalystTools.ALL);
+    }
+
+    private MessageCreateParams paramsFor(List<MessageParam> conversation, String systemPrompt,
+                                          List<Tool> tools) {
         MessageCreateParams.Builder builder = MessageCreateParams.builder()
                 .model(config.model())
                 .maxTokens(config.maxTokens())
-                .system(SYSTEM_PROMPT)
+                .system(systemPrompt)
                 // Adaptive thinking: the model decides how much reasoning a question needs. A
                 // fixed budget would over-think "what is AAPL trading at" and under-think a
                 // multi-instrument comparison.
@@ -201,7 +474,7 @@ public class MarketAnalyst {
                 .outputConfig(OutputConfig.builder()
                         .effort(OutputConfig.Effort.MEDIUM)
                         .build());
-        for (Tool tool : AnalystTools.ALL) {
+        for (Tool tool : tools) {
             builder.addTool(tool);
         }
         for (MessageParam message : conversation) {
@@ -231,6 +504,19 @@ public class MarketAnalyst {
                 case "compare_adjustments" -> toolkit.compareAdjustments(string(args.get("symbol")));
                 case "get_account_summary" -> toolkit.accountSummary(string(args.get("environment")));
                 case "get_feed_status" -> toolkit.feedStatus();
+                case "get_trend_statistics" -> toolkit.trendStatistics(
+                        string(args.get("symbol")),
+                        string(args.get("universe")),
+                        integer(args.get("horizonSessions"), 21));
+                case "rank_candidates" -> toolkit.rankCandidates(
+                        string(args.get("universe")),
+                        decimal(args.get("targetGainPercent")),
+                        integer(args.get("horizonSessions"), 21));
+                case "get_tradable_universe" -> toolkit.tradableUniverse(
+                        string(args.get("environment")),
+                        string(args.get("accountId")),
+                        string(args.get("query")),
+                        integer(args.get("limit"), 40));
                 default -> Map.of("error", "Unknown tool: " + toolUse.name());
             };
             return toolkit.toJson(result);

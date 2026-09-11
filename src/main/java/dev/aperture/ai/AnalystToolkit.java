@@ -6,15 +6,22 @@ import dev.aperture.account.AccountPosition;
 import dev.aperture.account.AccountService;
 import dev.aperture.account.BrokerAccount;
 import dev.aperture.account.TradingEnvironment;
+import dev.aperture.analysis.HistoryProvider;
+import dev.aperture.analysis.TrendAnalyzer;
+import dev.aperture.analysis.TrendStatistics;
 import dev.aperture.corporate.AdjustmentPolicy;
 import dev.aperture.corporate.CorporateActionService;
 import dev.aperture.corporate.RecordedAction;
 import dev.aperture.instrument.Instrument;
+import dev.aperture.instrument.InstrumentCatalog;
 import dev.aperture.instrument.ReferenceDataService;
+import dev.aperture.instrument.TradableInstrument;
+import dev.aperture.instrument.TradableUniverse;
 import dev.aperture.marketdata.Bar;
 import dev.aperture.marketdata.MarketDataService;
 import dev.aperture.marketdata.PriceHistory;
 import dev.aperture.marketdata.Quote;
+import dev.aperture.marketdata.Bar;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
@@ -46,6 +53,8 @@ public class AnalystToolkit {
     private final PriceHistory priceHistory;
     private final CorporateActionService corporateActions;
     private final AccountService accounts;
+    private final HistoryProvider history;
+    private final InstrumentCatalog catalog;
     private final ObjectMapper json;
 
     public AnalystToolkit(ReferenceDataService referenceData,
@@ -53,12 +62,16 @@ public class AnalystToolkit {
                           PriceHistory priceHistory,
                           CorporateActionService corporateActions,
                           AccountService accounts,
+                          HistoryProvider history,
+                          InstrumentCatalog catalog,
                           ObjectMapper json) {
         this.referenceData = referenceData;
         this.marketData = marketData;
         this.priceHistory = priceHistory;
         this.corporateActions = corporateActions;
         this.accounts = accounts;
+        this.history = history;
+        this.catalog = catalog;
         this.json = json;
     }
 
@@ -271,6 +284,200 @@ public class AnalystToolkit {
             rows.add(row);
         }
         return Map.of("environment", environment.label(), "accounts", rows);
+    }
+
+    /**
+     * How often this instrument has historically reached a range of gains within a horizon.
+     *
+     * <p>This is the tool that makes "should profit within a month" checkable. For every
+     * overlapping historical window it asks whether the high <em>touched</em> each target -
+     * touch, not close, because that is what fills a resting sell limit.
+     */
+    public Map<String, Object> trendStatistics(String symbol, String universeName,
+                                               int horizonSessions) {
+        TradableUniverse universe = parseUniverse(universeName);
+        List<Bar> bars = history.bars(symbol, universe);
+        if (bars.isEmpty()) {
+            return Map.of("error", universe == TradableUniverse.FUTURES
+                    ? "Futures market data is a separate Webull entitlement this account does not "
+                      + "have. Futures contracts can be listed but not analysed - do not "
+                      + "recommend them."
+                    : "No price history available for " + symbol + " in the " + universe.label()
+                      + " universe.");
+        }
+        int horizon = horizonSessions > 0 ? horizonSessions : TrendAnalyzer.ONE_MONTH_SESSIONS;
+        Optional<TrendStatistics> statistics = TrendAnalyzer.analyse(symbol, bars, horizon,
+                List.of(BigDecimal.valueOf(1), BigDecimal.valueOf(2), BigDecimal.valueOf(3),
+                        BigDecimal.valueOf(5), BigDecimal.valueOf(7), BigDecimal.valueOf(10),
+                        BigDecimal.valueOf(15)));
+        if (statistics.isEmpty()) {
+            return Map.of("error", "Not enough history for " + symbol
+                    + " to compute a " + horizon + "-session window.");
+        }
+        return describe(statistics.get());
+    }
+
+    private Map<String, Object> describe(TrendStatistics stats) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("symbol", stats.symbol());
+        out.put("lastClose", stats.lastClose());
+        out.put("lastSession", stats.lastSession().toString());
+        out.put("sessionsAnalysed", stats.sessionsAnalysed());
+        out.put("horizonSessions", stats.horizonSessions());
+        out.put("historicalWindows", stats.windows());
+        out.put("sampleIsSufficient", stats.isSufficient());
+        out.put("annualisedVolatilityPercent", stats.annualisedVolatilityPercent());
+        out.put("trailingReturnPercent", stats.trailingReturnPercent());
+        out.put("medianBestGainInWindowPercent", stats.medianBestGainPercent());
+        out.put("medianWorstDrawdownInWindowPercent", stats.medianWorstDrawdownPercent());
+        stats.sma20().ifPresent(v -> out.put("sma20", v));
+        stats.sma50().ifPresent(v -> out.put("sma50", v));
+        stats.high52Week().ifPresent(v -> out.put("high52Week", v));
+        stats.low52Week().ifPresent(v -> out.put("low52Week", v));
+
+        List<Map<String, Object>> rates = new ArrayList<>();
+        for (TrendStatistics.HitRate rate : stats.hitRates()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("targetGainPercent", rate.targetPercent());
+            row.put("hitRatePercent", rate.hitRatePercent());
+            row.put("windowsHit", rate.windowsHit());
+            rate.medianSessionsToHit().ifPresent(v -> row.put("medianSessionsToHit", v));
+            rates.add(row);
+        }
+        out.put("hitRates", rates);
+        out.put("interpretation", "hitRatePercent is the share of overlapping historical windows "
+                + "in which the high touched that gain within the horizon - i.e. how often a "
+                + "resting sell limit there would have filled. Windows overlap, so they are "
+                + "correlated and the effective sample is smaller than the count suggests. This "
+                + "describes the past; it is not a forecast.");
+        return out;
+    }
+
+    /**
+     * Ranks every instrument with locally loaded history by how often a given gain was reached.
+     *
+     * <p>Deliberately restricted to instruments already backfilled - the watchlist - so a scan
+     * costs no vendor requests at all. Scanning a whole universe would be thousands of calls
+     * against an API that rate-limits after a handful, so anything outside the watchlist is
+     * examined one at a time through {@link #trendStatistics}.
+     */
+    public Map<String, Object> rankCandidates(String universeName, BigDecimal targetGainPercent,
+                                             int horizonSessions) {
+        TradableUniverse universe = parseUniverse(universeName);
+        if (universe != TradableUniverse.EQUITY) {
+            // The scan reads locally backfilled history, which only covers watchlist equities.
+            // Returning equities to an account that cannot trade them would be worse than
+            // returning nothing, so it says what to do instead.
+            return Map.of(
+                    "error", "Only equities have history loaded locally, so there is nothing to "
+                            + "rank for the " + universe.label() + " universe.",
+                    "whatToDoInstead", "Use get_tradable_universe to pick candidate symbols, then "
+                            + "get_trend_statistics on each one with universe=" + universe.name()
+                            + ". Each of those is a separate vendor request, so choose a handful "
+                            + "rather than scanning.");
+        }
+        BigDecimal target = targetGainPercent == null || targetGainPercent.signum() <= 0
+                ? BigDecimal.valueOf(3) : targetGainPercent;
+        int horizon = horizonSessions > 0 ? horizonSessions : TrendAnalyzer.ONE_MONTH_SESSIONS;
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Instrument instrument : referenceData.tradable()) {
+            List<Bar> bars = priceHistory.bars(instrument.id(), AdjustmentPolicy.SPLITS_ONLY);
+            if (bars.isEmpty()) {
+                continue;
+            }
+            TrendAnalyzer.analyse(instrument.primarySymbol(), bars, horizon, List.of(target))
+                    .ifPresent(stats -> {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("symbol", instrument.primarySymbol());
+                        row.put("name", instrument.name());
+                        row.put("lastClose", stats.lastClose());
+                        stats.hitRates().stream().findFirst().ifPresent(rate -> {
+                            row.put("hitRatePercent", rate.hitRatePercent());
+                            rate.medianSessionsToHit()
+                                    .ifPresent(v -> row.put("medianSessionsToHit", v));
+                        });
+                        row.put("medianWorstDrawdownPercent", stats.medianWorstDrawdownPercent());
+                        row.put("annualisedVolatilityPercent", stats.annualisedVolatilityPercent());
+                        row.put("historicalWindows", stats.windows());
+                        marketData.quote(instrument.id()).ifPresent(quote -> {
+                            row.put("ask", quote.ask().toDisplay());
+                            row.put("spreadBps", quote.spreadBasisPoints());
+                            row.put("isLiveMarketData", quote.isLive());
+                        });
+                        rows.add(row);
+                    });
+        }
+        rows.sort((a, b) -> compareHitRates(b, a));
+        return Map.of(
+                "targetGainPercent", target,
+                "horizonSessions", horizon,
+                "candidates", rows,
+                "note", "Ranked by how often that gain was touched within the horizon. Only "
+                        + "instruments with history already loaded are scanned; use "
+                        + "get_trend_statistics for anything else.");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int compareHitRates(Map<String, Object> a, Map<String, Object> b) {
+        BigDecimal left = (BigDecimal) a.getOrDefault("hitRatePercent", BigDecimal.ZERO);
+        BigDecimal right = (BigDecimal) b.getOrDefault("hitRatePercent", BigDecimal.ZERO);
+        return left.compareTo(right);
+    }
+
+    /** What the selected account may trade, so the model cannot propose an ineligible instrument. */
+    public Map<String, Object> tradableUniverse(String environmentName, String accountId,
+                                                String query, int limit) {
+        TradingEnvironment environment = environmentName == null || environmentName.isBlank()
+                ? accounts.defaultEnvironment()
+                : TradingEnvironment.parseOrSandbox(environmentName);
+        Optional<BrokerAccount> account = accountId == null || accountId.isBlank()
+                ? accounts.defaultAccount(environment)
+                : accounts.findAccount(environment, accountId);
+        TradableUniverse universe = account
+                .map(a -> TradableUniverse.forAccountClass(a.accountClass()))
+                .orElse(TradableUniverse.EQUITY);
+
+        InstrumentCatalog.Listing listing = catalog.listing(
+                universe, query, "", true, limit > 0 ? Math.min(limit, 100) : 40);
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (TradableInstrument instrument : listing.instruments()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("symbol", instrument.symbol());
+            row.put("name", instrument.name());
+            row.put("group", instrument.group());
+            rows.add(row);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        account.ifPresent(a -> {
+            out.put("account", a.displayName());
+            out.put("accountClass", a.accountClass());
+            out.put("accountType", a.accountType());
+        });
+        out.put("environment", environment.label());
+        out.put("universe", universe.name());
+        out.put("universeLabel", universe.label());
+        out.put("totalInstruments", listing.total());
+        out.put("showing", rows.size());
+        out.put("instruments", rows);
+        if (universe == TradableUniverse.FUTURES) {
+            out.put("warning", "This account trades futures, but futures market data is a separate "
+                    + "Webull entitlement this account does not have. Contracts can be listed and "
+                    + "not analysed, so do not recommend futures trades.");
+        }
+        return out;
+    }
+
+    static TradableUniverse parseUniverse(String name) {
+        if (name == null || name.isBlank()) {
+            return TradableUniverse.EQUITY;
+        }
+        try {
+            return TradableUniverse.valueOf(name.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return TradableUniverse.EQUITY;
+        }
     }
 
     /** The current feed state, so the model can qualify how fresh its inputs are. */

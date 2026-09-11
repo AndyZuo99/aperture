@@ -20,6 +20,15 @@ const state = {
   universeQuery: '',
   universeGroup: '',
   universeTradableOnly: true,
+  analystMode: 'ask',
+  recommending: false,
+  // Monotonic request ids. Panels are reloaded by user actions that can fire faster than the
+  // requests complete, and the universes differ hugely in cost: a cached equity listing returns
+  // in milliseconds while a cold event listing takes seconds. Without these, switching from an
+  // events account to an equities one renders the equities correctly and is then overwritten by
+  // the slower events response that was already in flight.
+  universeRequest: 0,
+  historyRequest: 0,
 };
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -189,9 +198,11 @@ function selectSymbol(symbol) {
 
 async function loadHistory() {
   if (!state.selectedSymbol) return;
+  const requestId = ++state.historyRequest;
   try {
     const history = await getJson(
       `/api/market/history/${state.selectedSymbol}?policy=${state.policy}&days=250`);
+    if (requestId !== state.historyRequest) return;
     state.history = history;
 
     if (!history || !history.bars.length) {
@@ -222,6 +233,7 @@ async function loadHistory() {
 
     drawChart(history);
   } catch (e) {
+    if (requestId !== state.historyRequest) return;
     $('chartEmpty').hidden = false;
     $('chartEmpty').textContent = 'Could not load history: ' + e.message;
     $('chartCanvas').hidden = true;
@@ -469,6 +481,7 @@ async function loadActions() {
  * showing a stock list to a futures account would be listing things it cannot buy.
  */
 async function loadUniverse() {
+  const requestId = ++state.universeRequest;
   const params = new URLSearchParams({
     environment: state.environment,
     tradableOnly: String(state.universeTradableOnly),
@@ -480,9 +493,13 @@ async function loadUniverse() {
 
   try {
     const data = await getJson('/api/instruments/tradable?' + params.toString());
+    // A newer request has been issued since this one left; its answer is the current truth.
+    if (requestId !== state.universeRequest) return;
     if (data) renderUniverse(data);
   } catch (e) {
-    $('universeHint').textContent = 'Could not load instruments';
+    if (requestId === state.universeRequest) {
+      $('universeHint').textContent = 'Could not load instruments';
+    }
   }
 }
 
@@ -568,6 +585,8 @@ async function loadAnalystStatus() {
     $('analystHint').textContent = status.available ? status.model : status.reason;
     $('askInput').disabled = !status.available;
     $('askButton').disabled = !status.available;
+    $('recommendButton').disabled = !status.available;
+    $('capitalInput').disabled = !status.available;
   } catch (e) { /* the analyst is optional; its absence must not break the page */ }
 }
 
@@ -601,6 +620,114 @@ async function ask(question) {
     $('askButton').disabled = false;
     $('askButton').textContent = 'Ask';
   }
+}
+
+/* ── recommendations ─────────────────────────────────────────────── */
+
+/*
+ * A recommendation is a two-leg plan: buy at the market now, rest a GTC sell limit at a target
+ * that history says is reachable inside the horizon. Everything numeric here was computed
+ * server-side from live quotes and the instrument's own bars - the model supplied only the
+ * symbol, the size and the target.
+ */
+async function requestRecommendations() {
+  if (state.recommending) return;
+  state.recommending = true;
+  $('recommendButton').disabled = true;
+  $('recommendButton').textContent = 'Working…';
+  $('recList').innerHTML = '';
+  $('recommendStatus').hidden = false;
+  $('recommendMeta').textContent = '';
+  $('recommendBody').className = 'answer-body';
+  $('recommendBody').textContent =
+    'Scanning candidates, checking what this account can trade, and testing targets against history…';
+
+  const capital = Number($('capitalInput').value) || 0;
+  try {
+    const result = await postJson('/api/analyst/recommend', {
+      environment: state.environment,
+      accountId: state.accountId,
+      capital,
+    });
+
+    if (!result.succeeded) {
+      $('recommendBody').className = 'answer-body is-error';
+      $('recommendBody').textContent = result.error || 'The recommender could not complete.';
+      return;
+    }
+
+    const tools = result.toolCalls.length ? ` · ${result.toolCalls.length} tool calls` : '';
+    $('recommendMeta').textContent =
+      `${result.model} · ${result.turns} turns · ${(result.elapsedMillis / 1000).toFixed(0)}s` +
+      `${tools} · ${result.account || 'no account'} (${result.environment})` +
+      `${result.marketDataLive ? '' : ' · SIMULATED DATA'}`;
+    $('recommendBody').textContent = result.commentary || '';
+
+    if (!result.recommendations.length) {
+      $('recList').innerHTML =
+        '<div class="rec"><div class="rec-rationale">No trades recommended.</div></div>';
+      return;
+    }
+    $('recList').innerHTML = result.recommendations.map(renderRecommendation).join('');
+  } catch (e) {
+    $('recommendBody').className = 'answer-body is-error';
+    $('recommendBody').textContent = 'Request failed: ' + e.message;
+  } finally {
+    state.recommending = false;
+    $('recommendButton').disabled = false;
+    $('recommendButton').textContent = 'Recommend trades';
+  }
+}
+
+function renderRecommendation(rec) {
+  const e = rec.economics;
+
+  const econ = [
+    ['Entry', money(e.entryPrice)],
+    ['Target', money(e.targetPrice)],
+    ['Cost', money(e.notional)],
+    ['Profit', `<span class="${signClass(e.grossProfit)}">${signed(e.grossProfit)}</span>`],
+    ['Return', `<span class="${signClass(e.returnPercent)}">${signed(e.returnPercent)}%</span>`],
+    // The evidence for the target being reachable at all.
+    ['Hit rate', e.historicalHitRatePercent === null || e.historicalHitRatePercent === undefined
+      ? '—'
+      : `${Number(e.historicalHitRatePercent).toFixed(0)}%` +
+        (e.historicalWindows ? `<span class="flat"> /${e.historicalWindows}</span>` : '')],
+    ['Time to hit', e.medianSessionsToHit ? `${e.medianSessionsToHit}d` : '—'],
+    // The part that is easy to leave out of a pitch.
+    ['Drawdown', `<span class="down">${money(e.medianDrawdownPercent)}%</span>`],
+    ['Reward:risk', e.rewardToRisk === null || e.rewardToRisk === undefined
+      ? '—' : Number(e.rewardToRisk).toFixed(2)],
+  ];
+
+  const legs = rec.legs.map((l) => `
+    <div class="rec-leg ${l.side.toLowerCase()}">
+      <span>${l.description}</span>
+      <span class="leg-purpose">${l.purpose}</span>
+    </div>`).join('');
+
+  const warnings = e.warnings && e.warnings.length ? `
+    <div class="rec-warnings">
+      <ul>${e.warnings.map((w) => `<li>${w}</li>`).join('')}</ul>
+    </div>` : '';
+
+  return `
+    <div class="rec ${e.viable ? '' : 'not-viable'}">
+      <div class="rec-head">
+        <span class="rec-symbol">${rec.symbol}</span>
+        ${rec.conviction ? `<span class="conviction conviction-${rec.conviction}">${rec.conviction}</span>` : ''}
+        <span class="flat">${rec.universe}</span>
+        <span class="rec-horizon">${rec.horizon}</span>
+      </div>
+      <div class="rec-legs">${legs}</div>
+      <div class="rec-econ">
+        ${econ.map(([label, value]) => `
+          <div class="econ"><span class="econ-label">${label}</span>
+            <span class="econ-value">${value}</span></div>`).join('')}
+      </div>
+      <div class="rec-rationale">${rec.rationale}</div>
+      ${warnings}
+    </div>`;
 }
 
 /* ── wiring ──────────────────────────────────────────────────────── */
@@ -649,6 +776,20 @@ function wireEvents() {
     event.preventDefault();
     ask($('askInput').value);
   });
+
+  $('recommendForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    requestRecommendations();
+  });
+
+  document.querySelectorAll('.mode-btn').forEach((button) =>
+    button.addEventListener('click', () => {
+      state.analystMode = button.dataset.mode;
+      document.querySelectorAll('.mode-btn').forEach((b) =>
+        b.classList.toggle('is-active', b === button));
+      $('askMode').hidden = state.analystMode !== 'ask';
+      $('recommendMode').hidden = state.analystMode !== 'recommend';
+    }));
 
   document.querySelectorAll('.chip').forEach((chip) =>
     chip.addEventListener('click', () => {

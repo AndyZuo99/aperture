@@ -4,6 +4,7 @@ import dev.aperture.account.AccountBalance;
 import dev.aperture.account.AccountPosition;
 import dev.aperture.account.BrokerAccount;
 import dev.aperture.common.Money;
+import dev.aperture.common.Price;
 import dev.aperture.corporate.AdjustmentPolicy;
 import dev.aperture.corporate.RecordedAction;
 import dev.aperture.instrument.Instrument;
@@ -13,6 +14,10 @@ import dev.aperture.marketdata.FeedStatus;
 import dev.aperture.marketdata.MarketDepth;
 import dev.aperture.marketdata.Quote;
 import dev.aperture.ai.AnalysisResult;
+import dev.aperture.ai.OrderLeg;
+import dev.aperture.ai.RecommendationSet;
+import dev.aperture.ai.TradeEconomics;
+import dev.aperture.ai.TradeRecommendation;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -157,6 +162,65 @@ public class ApiMapper {
                 result.turns(),
                 result.elapsed().toMillis(),
                 result.error());
+    }
+
+    public ApiDtos.RecommendationSetView toRecommendationSetView(RecommendationSet set) {
+        List<ApiDtos.RecommendationView> views = new ArrayList<>();
+        for (TradeRecommendation recommendation : set.recommendations()) {
+            views.add(toRecommendationView(recommendation));
+        }
+        return new ApiDtos.RecommendationSetView(
+                set.succeeded(),
+                set.commentary(),
+                set.accountLabel(),
+                set.environment(),
+                set.marketDataLive(),
+                set.totalCapitalRequired().toDisplay(),
+                views,
+                set.model(),
+                set.turns(),
+                set.toolCalls(),
+                set.elapsed().toMillis(),
+                set.error());
+    }
+
+    private ApiDtos.RecommendationView toRecommendationView(TradeRecommendation recommendation) {
+        List<ApiDtos.OrderLegView> legs = new ArrayList<>();
+        for (OrderLeg leg : recommendation.legs()) {
+            legs.add(new ApiDtos.OrderLegView(
+                    leg.side().name(),
+                    leg.type().name(),
+                    leg.quantity().toDisplay(),
+                    leg.limitPrice().map(Price::toDisplay).orElse(null),
+                    leg.timeInForce().name(),
+                    leg.purpose(),
+                    leg.describe()));
+        }
+        TradeEconomics economics = recommendation.economics();
+        return new ApiDtos.RecommendationView(
+                recommendation.symbol(),
+                recommendation.name(),
+                recommendation.universe(),
+                recommendation.conviction(),
+                recommendation.rationale(),
+                recommendation.horizonSessions(),
+                recommendation.horizonDescription(),
+                legs,
+                new ApiDtos.EconomicsView(
+                        economics.entryPrice().toDisplay(),
+                        economics.targetPrice().toDisplay(),
+                        economics.notional().toDisplay(),
+                        economics.grossProfit().toDisplay(),
+                        economics.returnPercent(),
+                        economics.spreadCostPercent(),
+                        economics.netReturnAfterSpreadPercent(),
+                        economics.historicalHitRatePercent().orElse(null),
+                        economics.historicalWindows().orElse(null),
+                        economics.medianSessionsToHit().orElse(null),
+                        economics.medianDrawdownPercent(),
+                        economics.rewardToRisk().orElse(null),
+                        economics.warnings(),
+                        economics.viable()));
     }
 
     public String policyLabel(AdjustmentPolicy policy) {
