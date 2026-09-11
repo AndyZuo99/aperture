@@ -78,7 +78,7 @@ public class AnalystToolkit {
     /** Every instrument Aperture is following, with whether history is loaded. */
     public Map<String, Object> listInstruments() {
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Instrument instrument : referenceData.all()) {
+        for (Instrument instrument : referenceData.watchlist()) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("symbol", instrument.primarySymbol());
             row.put("name", instrument.name());
@@ -391,6 +391,9 @@ public class AnalystToolkit {
                         Map<String, Object> row = new LinkedHashMap<>();
                         row.put("symbol", instrument.primarySymbol());
                         row.put("name", instrument.name());
+                        // Watchlist names carry a live streaming quote; candidates are priced
+                        // from their last daily close until one is requested.
+                        row.put("watchlisted", referenceData.isWatched(instrument.id()));
                         row.put("lastClose", stats.lastClose());
                         stats.hitRates().stream().findFirst().ifPresent(rate -> {
                             row.put("hitRatePercent", rate.hitRatePercent());
@@ -413,9 +416,12 @@ public class AnalystToolkit {
                 "targetGainPercent", target,
                 "horizonSessions", horizon,
                 "candidates", rows,
-                "note", "Ranked by how often that gain was touched within the horizon. Only "
-                        + "instruments with history already loaded are scanned; use "
-                        + "get_trend_statistics for anything else.");
+                "scanned", rows.size(),
+                "note", "Ranked by how often that gain was touched within the horizon. Covers "
+                        + "every instrument with daily history loaded - the watchlist plus the "
+                        + "wider candidate pool. Rows marked watchlisted=false are priced from "
+                        + "their last close, so call get_quotes on any you shortlist to get a "
+                        + "live bid and ask before setting a target.");
     }
 
     @SuppressWarnings("unchecked")

@@ -129,7 +129,7 @@ class TradePlannerTest {
     @Test
     @DisplayName("simulated prices are flagged on the plan itself")
     void simulatedPricesAreFlagged() {
-        when(marketData.quote(anyString())).thenReturn(Optional.of(
+        when(marketData.quoteOnDemand(anyString())).thenReturn(Optional.of(
                 quote(99.00, 100.00, 100.00, QuoteProvenance.SIMULATED)));
 
         TradeRecommendation plan = plan(110.00);
@@ -168,7 +168,7 @@ class TradePlannerTest {
     @Test
     @DisplayName("with no quote and no history there is nothing to price against")
     void noQuoteAndNoHistoryYieldsNoPlan() {
-        when(marketData.quote(anyString())).thenReturn(Optional.empty());
+        when(marketData.quoteOnDemand(anyString())).thenReturn(Optional.empty());
         when(history.bars(anyString(), any())).thenReturn(List.of());
 
         assertThat(planner.plan("TEST", "Test", TradableUniverse.EQUITY,
@@ -187,8 +187,14 @@ class TradePlannerTest {
                 .orElseThrow();
     }
 
+    /**
+     * Stubs the on-demand path, which is what the planner calls.
+     *
+     * <p>Not {@code quote(...)}: a shortlisted candidate is not streamed, so the planner fetches
+     * its quote on demand rather than reading the cache.
+     */
     private void quoted(double bid, double ask, double last) {
-        when(marketData.quote(anyString()))
+        when(marketData.quoteOnDemand(anyString()))
                 .thenReturn(Optional.of(quote(bid, ask, last, QuoteProvenance.LIVE_STREAM)));
     }
 

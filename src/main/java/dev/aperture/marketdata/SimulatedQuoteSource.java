@@ -75,7 +75,7 @@ public class SimulatedQuoteSource implements QuoteSource {
 
     /** Advances every simulated price by one tick. Driven by the scheduler. */
     public void tick() {
-        for (Instrument instrument : referenceData.tradable()) {
+        for (Instrument instrument : referenceData.watchlist()) {
             state(instrument).advance(random);
         }
     }

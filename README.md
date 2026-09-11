@@ -144,6 +144,25 @@ is split:
 The model is never asked for an expected profit. Asked for one it will produce a confident number
 that nothing verifies; asked only for a target, its proposal can be priced, tested and rejected.
 
+### Where candidates come from
+
+The watchlist and the candidate pool are deliberately separate:
+
+| | Purpose | Cost |
+|---|---|---|
+| **Watchlist** (10) | Quoted, streamed, charted | A streaming subscription each |
+| **Candidate pool** (~100) | Daily bars only, for the recommender to scan | Six batched bar requests a day |
+
+Subscribing to a hundred names to scan them would mean a hundred streaming subscriptions and an
+unreadable quote grid. Backfilling their history instead costs almost nothing, and it widens the
+search enormously — in a live run, the two best trades by reward-to-risk (PSX at 0.88, MRK at
+0.97) both came from the candidate pool, roughly double the best watchlist name.
+
+Candidates have no cached quote, so the planner fetches one **on demand** before pricing. The
+entry price is the single most important number on a recommendation, and the gap between a
+previous close and the live ask is the difference between a plan that is priced and one that is
+estimated.
+
 ### What makes the target falsifiable
 
 For every overlapping historical window,
@@ -249,6 +268,10 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 - `getDividendCalendar(symbol, category)` — real cash dividends. Note the argument order; reversing
   it returns `417 UNSUPPORTED_CATEGORY` naming the *symbol* as the bad category.
 - `getQuote(depth=1)`, `getInstruments`, `getCompanyProfile`, and the whole v3 trade API.
+- **The batch caps differ per endpoint and are enforced strictly.** `getBatchBars` takes a hard
+  **20** symbols (`417 ILLEGAL_PARAMETER: symbols size must be between 1 and 20`), while
+  `getSnapshots` handles 50+ comfortably. Sharing one batch-size constant between them is a latent
+  bug that stays hidden while the watchlist is small and fires the moment it is not.
 - `getInstrumentsV2` / `getCryptoInstrument` / `getFuturesProducts` / `getEventSeriesList` — the
   four tradable universes. Two wrinkles: `getInstrumentsV2` ignores `pageSize`, returns a thousand
   rows ordered by instrument id, and **the first page is entirely ETFs** — a single call yields an

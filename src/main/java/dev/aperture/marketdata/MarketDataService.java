@@ -85,7 +85,7 @@ public class MarketDataService {
     /** Every current quote, in watchlist order. */
     public Map<InstrumentId, Quote> allQuotes() {
         Map<InstrumentId, Quote> out = new LinkedHashMap<>();
-        for (Instrument instrument : referenceData.all()) {
+        for (Instrument instrument : referenceData.watchlist()) {
             Quote quote = latest.get(instrument.id());
             if (quote != null) {
                 out.put(instrument.id(), quote);
@@ -112,7 +112,7 @@ public class MarketDataService {
      * would spend request budget to produce a staler answer.
      */
     public void poll() {
-        List<Instrument> instruments = referenceData.tradable();
+        List<Instrument> instruments = referenceData.watchlist();
         if (instruments.isEmpty()) {
             return;
         }
@@ -186,6 +186,36 @@ public class MarketDataService {
             return existing.isLive() ? existing : candidate;
         }
         return candidate.receivedAt().isBefore(existing.receivedAt()) ? existing : candidate;
+    }
+
+    /**
+     * A quote for an instrument that is not streamed, fetched on demand.
+     *
+     * <p>Only the watchlist is subscribed, so a candidate the recommender has shortlisted has no
+     * cached quote and would otherwise be priced from its last daily close. The entry price is the
+     * single most important number on a recommendation - the difference between a close and the
+     * live ask is the difference between a plan that is priced and one that is estimated - so it
+     * is worth one REST call to get right.
+     *
+     * <p>The result is fed through the normal cache, so a second request within the staleness
+     * window costs nothing.
+     */
+    public Optional<Quote> quoteOnDemand(String symbol) {
+        Optional<Quote> cached = quote(symbol);
+        if (cached.isPresent() && cached.get().isLive()
+                && !config.isStale(cached.get().receivedAt(), clock.now())) {
+            return cached;
+        }
+        Optional<Instrument> instrument = referenceData.resolve(symbol);
+        if (instrument.isEmpty() || !holder.isConnected() || rest.isEntitlementMissing()) {
+            return cached;
+        }
+        try {
+            rest.quotes(List.of(instrument.get())).values().forEach(this::accept);
+        } catch (RuntimeException e) {
+            log.debug("On-demand quote for {} failed: {}", symbol, e.getMessage());
+        }
+        return quote(instrument.get().id()).or(() -> cached);
     }
 
     /** Best bid and offer with sizes, when the entitlement permits it. */

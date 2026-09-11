@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
 
@@ -22,27 +23,52 @@ public class ReferenceDataService {
     private final Map<InstrumentId, Instrument> byId = new ConcurrentHashMap<>();
     private final Map<String, InstrumentId> bySymbol = new ConcurrentHashMap<>();
 
+    /**
+     * The subset that is actively quoted, streamed and charted.
+     *
+     * <p>Everything else in the registry is a <em>candidate</em>: backfilled with daily bars so
+     * the recommender can scan it, but never subscribed to. A few hundred candidates cost a
+     * handful of bar requests a day; subscribing to them would cost a few hundred streaming
+     * subscriptions and swamp the quote grid.
+     */
+    private final Set<InstrumentId> watched = ConcurrentHashMap.newKeySet();
+
     public ReferenceDataService(ApertureProperties properties) {
         for (String symbol : properties.marketData().watchlist()) {
-            String normalised = symbol.trim().toUpperCase();
-            if (normalised.isEmpty()) {
-                continue;
-            }
-            register(new Instrument(
-                    InstrumentId.of(normalised),
-                    normalised,
-                    nameFor(normalised),
-                    typeFor(normalised),
-                    "NASDAQ",
-                    "USD",
-                    Optional.empty(),
-                    true));
+            registerSymbol(symbol, true);
+        }
+        for (String symbol : properties.marketData().candidateUniverse()) {
+            registerSymbol(symbol, false);
         }
     }
 
+    private void registerSymbol(String symbol, boolean watch) {
+        String normalised = symbol == null ? "" : symbol.trim().toUpperCase();
+        if (normalised.isEmpty() || bySymbol.containsKey(normalised)) {
+            return;
+        }
+        register(new Instrument(
+                InstrumentId.of(normalised),
+                normalised,
+                nameFor(normalised),
+                typeFor(normalised),
+                "NASDAQ",
+                "USD",
+                Optional.empty(),
+                true), watch);
+    }
+
+    /** Registers an instrument as watched. */
     public Instrument register(Instrument instrument) {
+        return register(instrument, true);
+    }
+
+    public Instrument register(Instrument instrument, boolean watch) {
         byId.put(instrument.id(), instrument);
         bySymbol.put(instrument.primarySymbol(), instrument.id());
+        if (watch) {
+            watched.add(instrument.id());
+        }
         return instrument;
     }
 
@@ -70,8 +96,27 @@ public class ReferenceDataService {
                 .toList();
     }
 
+    /** Everything tradable, watched or not. Used for history backfill and candidate scanning. */
     public List<Instrument> tradable() {
         return all().stream().filter(Instrument::isTradable).toList();
+    }
+
+    /** Only the instruments to quote, stream and chart. */
+    public List<Instrument> watchlist() {
+        return all().stream()
+                .filter(Instrument::isTradable)
+                .filter(instrument -> watched.contains(instrument.id()))
+                .toList();
+    }
+
+    public boolean isWatched(InstrumentId id) {
+        return watched.contains(id);
+    }
+
+    public int candidateCount() {
+        return (int) all().stream()
+                .filter(instrument -> !watched.contains(instrument.id()))
+                .count();
     }
 
     public Collection<InstrumentId> allIds() {

@@ -71,6 +71,112 @@ aperture:
       - JPM
       - V
       - SPY
+    # Names the recommender scans but that are NOT quoted or streamed. The watchlist above is
+    # what you are watching; this is the pool the analyst searches for entries. Daily bars are
+    # batched 20 at a time, so ~120 candidates cost six requests once a day - where subscribing
+    # to them would mean 120 streaming subscriptions and an unreadable quote grid.
+    candidate-universe:
+      - UNH
+      - XOM
+      - JNJ
+      - WMT
+      - PG
+      - MA
+      - HD
+      - CVX
+      - ABBV
+      - PEP
+      - KO
+      - AVGO
+      - COST
+      - MRK
+      - LLY
+      - BAC
+      - PFE
+      - TMO
+      - CSCO
+      - ACN
+      - MCD
+      - ABT
+      - CRM
+      - DHR
+      - LIN
+      - ADBE
+      - TXN
+      - NKE
+      - NEE
+      - PM
+      - ORCL
+      - RTX
+      - HON
+      - UPS
+      - QCOM
+      - LOW
+      - INTU
+      - AMD
+      - CAT
+      - BA
+      - GE
+      - MMM
+      - DE
+      - AXP
+      - BKNG
+      - GS
+      - SBUX
+      - AMAT
+      - ISRG
+      - BLK
+      - MDLZ
+      - ADI
+      - GILD
+      - CVS
+      - VRTX
+      - REGN
+      - NOW
+      - ZTS
+      - TJX
+      - SYK
+      - MO
+      - SCHW
+      - C
+      - PLD
+      - CB
+      - SO
+      - DUK
+      - ITW
+      - BSX
+      - EQIX
+      - AON
+      - CME
+      - MU
+      - LRCX
+      - PANW
+      - SNPS
+      - CDNS
+      - KLAC
+      - MRVL
+      - FTNT
+      - ORLY
+      - MCK
+      - APD
+      - CL
+      - NSC
+      - EMR
+      - PSX
+      - MPC
+      - SLB
+      - COP
+      - EOG
+      - OXY
+      - HAL
+      - DVN
+      - QQQ
+      - IWM
+      - DIA
+      - XLF
+      - XLE
+      - XLK
+
     # The vendor rate-limits aggressively (429 TOO_MANY_REQUESTS after only a handful of rapid
     # calls), and streaming instruments are not polled at all, so this is a backstop rather than
     # the main path.

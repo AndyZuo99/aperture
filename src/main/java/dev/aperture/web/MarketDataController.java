@@ -171,7 +171,7 @@ public class MarketDataController {
     @GetMapping("/instruments")
     public List<Map<String, Object>> instruments() {
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Instrument instrument : referenceData.all()) {
+        for (Instrument instrument : referenceData.watchlist()) {
             rows.add(Map.of(
                     "symbol", instrument.primarySymbol(),
                     "name", instrument.name(),

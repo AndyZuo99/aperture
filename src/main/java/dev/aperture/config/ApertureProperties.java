@@ -112,6 +112,13 @@ public record ApertureProperties(
     public record MarketData(
             @DefaultValue({"AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM", "V", "SPY"})
             List<String> watchlist,
+            /*
+             * Names backfilled for the recommender to scan, but NOT quoted or streamed. The
+             * watchlist is what you are watching; this is the pool the analyst searches. Keeping
+             * them separate means a few hundred candidates cost a handful of daily bar requests
+             * rather than a few hundred streaming subscriptions.
+             */
+            @DefaultValue({}) List<String> candidateUniverse,
             @DefaultValue("2s") Duration pollInterval,
             @DefaultValue("15s") Duration staleAfter,
             @DefaultValue("250") int historyDays,

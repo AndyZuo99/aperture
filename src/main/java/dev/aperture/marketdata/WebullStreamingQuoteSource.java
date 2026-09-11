@@ -327,7 +327,9 @@ public class WebullStreamingQuoteSource implements QuoteSource {
 
     private Set<String> equitySymbols() {
         Set<String> symbols = new LinkedHashSet<>();
-        for (Instrument instrument : referenceData.tradable()) {
+        // Only the watchlist is subscribed. Candidates exist for historical scanning and
+        // would otherwise turn a 10-symbol subscription into a few hundred.
+        for (Instrument instrument : referenceData.watchlist()) {
             symbols.add(instrument.primarySymbol());
             bySymbol.put(instrument.primarySymbol(), instrument.id());
         }

@@ -64,8 +64,21 @@ public class WebullQuoteClient implements QuoteSource {
 
     private static final Logger log = LoggerFactory.getLogger(WebullQuoteClient.class);
 
-    /** Vendor cap on symbols per batch request. */
+    /** Vendor cap on symbols per snapshot request. Verified comfortably at 50. */
     private static final int MAX_BATCH_SYMBOLS = 100;
+
+    /**
+     * Vendor cap on symbols per <em>bar</em> request - a hard 20.
+     *
+     * <p>Different from the snapshot cap, and enforced strictly:
+     * {@code 417 ILLEGAL_PARAMETER: symbols size must be between 1 and 20}. Sharing one constant
+     * between the two endpoints is a latent bug that stays hidden while the watchlist is small
+     * and fires the moment it is not.
+     */
+    private static final int MAX_BAR_SYMBOLS = 20;
+
+    /** Pause between bar batches, to stay under the vendor's rate limit. */
+    private static final long BAR_BATCH_SPACING_MS = 300;
 
     /**
      * Vendor bar timestamps look like {@code 2026-09-10T04:00:00.000+0000}. A bare
@@ -236,7 +249,7 @@ public class WebullQuoteClient implements QuoteSource {
             bySymbol.put(instrument.primarySymbol(), instrument);
         }
         Map<InstrumentId, List<Bar>> out = new LinkedHashMap<>();
-        for (List<String> batch : partition(List.copyOf(bySymbol.keySet()))) {
+        for (List<String> batch : partition(List.copyOf(bySymbol.keySet()), MAX_BAR_SYMBOLS)) {
             try {
                 BatchBarResponse response =
                         client.get().getBatchBars(batch, Category.US_STOCK.name(), "D", count);
@@ -261,6 +274,14 @@ public class WebullQuoteClient implements QuoteSource {
                 }
             } catch (RuntimeException e) {
                 log.debug("Webull daily bars failed for {} symbols: {}", batch.size(), e.getMessage());
+            }
+            try {
+                // Twenty symbols per request means a wide candidate pool is several requests in
+                // a row, which is exactly what trips the rate limiter.
+                Thread.sleep(BAR_BATCH_SPACING_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             }
         }
         return out;
@@ -511,9 +532,13 @@ public class WebullQuoteClient implements QuoteSource {
     }
 
     private static List<List<String>> partition(List<String> symbols) {
+        return partition(symbols, MAX_BATCH_SYMBOLS);
+    }
+
+    private static List<List<String>> partition(List<String> symbols, int size) {
         List<List<String>> batches = new ArrayList<>();
-        for (int i = 0; i < symbols.size(); i += MAX_BATCH_SYMBOLS) {
-            batches.add(symbols.subList(i, Math.min(i + MAX_BATCH_SYMBOLS, symbols.size())));
+        for (int i = 0; i < symbols.size(); i += size) {
+            batches.add(symbols.subList(i, Math.min(i + size, symbols.size())));
         }
         return batches;
     }

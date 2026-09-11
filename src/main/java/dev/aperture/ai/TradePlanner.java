@@ -55,7 +55,10 @@ public class TradePlanner {
                                               TradableUniverse universe, Quantity quantity,
                                               Price targetPrice, int horizonSessions,
                                               String conviction, String rationale) {
-        Optional<Quote> quote = marketData.quote(symbol);
+        // On demand, not from the cache: a shortlisted candidate is not streamed, and pricing
+        // an entry from yesterday's close when a live ask is one request away would understate
+        // or overstate every figure that follows from it.
+        Optional<Quote> quote = marketData.quoteOnDemand(symbol);
         List<Bar> bars = history.bars(symbol, universe);
 
         // Fall back to the last bar's close when there is no live quote - common for instruments
