@@ -274,6 +274,53 @@ public final class ApiDtos {
     public record RecommendRequest(String environment, String accountId, BigDecimal capital) {
     }
 
+    /**
+     * A request to submit one recommendation's two legs.
+     *
+     * <p>Carries the plan's inputs rather than its computed economics. The server re-prices and
+     * re-validates before sending anything, so a stale browser tab cannot submit a market order
+     * against a price that has moved on.
+     *
+     * @param expectedEntryPrice what the operator saw when they decided; the submission is
+     *     refused if the live ask has moved away from it
+     */
+    public record SubmitOrderRequest(
+            String environment,
+            String accountId,
+            String symbol,
+            String universe,
+            BigDecimal quantity,
+            BigDecimal targetPrice,
+            Integer horizonSessions,
+            BigDecimal expectedEntryPrice,
+            Boolean allowExtendedHours) {
+    }
+
+    public record SubmissionView(
+            boolean accepted,
+            String refusedReason,
+            String environment,
+            String account,
+            boolean unprotected,
+            LegResultView entry,
+            LegResultView exit,
+            List<String> notes) {
+    }
+
+    public record LegResultView(
+            String side,
+            String orderType,
+            String timeInForce,
+            BigDecimal quantity,
+            BigDecimal limitPrice,
+            String clientOrderId,
+            String orderId,
+            String status,
+            BigDecimal filledQuantity,
+            BigDecimal filledPrice,
+            String error) {
+    }
+
     public record AskRequest(String question) {
     }
 

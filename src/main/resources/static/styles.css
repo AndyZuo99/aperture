@@ -411,3 +411,33 @@ select:disabled { color: var(--text-faint); }
 .rec.not-viable { opacity: .7; }
 .rec.not-viable .rec-symbol::after { content: ' · not viable'; font-size: 11px; font-weight: 400;
   color: var(--down); }
+
+
+/* ── Submitting a recommendation ───────────────────────────────── */
+
+.rec-actions { display: flex; align-items: center; gap: 9px; margin-top: 11px; flex-wrap: wrap; }
+
+.submit-btn {
+  background: var(--up-soft); border: 1px solid var(--up); border-radius: 5px;
+  color: var(--up); font: inherit; font-size: 11.5px; font-weight: 600;
+  padding: 6px 13px; cursor: pointer;
+}
+.submit-btn:hover { background: var(--up); color: #06281b; }
+.submit-btn:disabled { opacity: .45; cursor: default; }
+
+/* The confirm step is visually distinct from the arm step - the second click is the one that
+   sends orders, and it should not look like the first. */
+.submit-btn.confirming { background: var(--down-soft); border-color: var(--down); color: var(--down); }
+.submit-btn.confirming:hover { background: var(--down); color: #2a0b0a; }
+
+.ext-toggle { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--text-faint); cursor: pointer; }
+.ext-toggle input { accent-color: var(--warn); }
+
+.submit-note { font-size: 10.5px; color: var(--text-faint); }
+
+.submit-result { margin-top: 10px; border-radius: 5px; padding: 9px 11px; font-size: 11.5px; line-height: 1.55; }
+.submit-result.ok     { background: var(--up-soft); color: var(--up); }
+.submit-result.warn   { background: var(--warn-soft); color: var(--warn); }
+.submit-result.failed { background: var(--down-soft); color: var(--down); }
+.submit-result .leg { font-family: var(--mono); font-size: 11px; display: block; margin-top: 3px; }
+.submit-result ul { margin: 6px 0 0; padding-left: 16px; }

@@ -22,6 +22,8 @@ const state = {
   universeTradableOnly: true,
   analystMode: 'ask',
   recommending: false,
+  orderCapability: null,
+  armedSubmit: null,   // symbol whose submit button is armed for confirmation
   // Monotonic request ids. Panels are reloaded by user actions that can fire faster than the
   // requests complete, and the universes differ hugely in cost: a cached equity listing returns
   // in milliseconds while a cold event listing takes seconds. Without these, switching from an
@@ -578,6 +580,12 @@ const escapeAttr = (value) => String(value).replace(/"/g, '&quot;');
 
 /* ── analyst ─────────────────────────────────────────────────────── */
 
+async function loadOrderCapability() {
+  try {
+    state.orderCapability = await getJson('/api/orders/capability');
+  } catch (e) { /* submission simply stays disabled if this cannot be read */ }
+}
+
 async function loadAnalystStatus() {
   try {
     const status = await getJson('/api/analyst/status');
@@ -668,7 +676,10 @@ async function requestRecommendations() {
         '<div class="rec"><div class="rec-rationale">No trades recommended.</div></div>';
       return;
     }
+    state.lastRecommendations = result.recommendations;
     $('recList').innerHTML = result.recommendations.map(renderRecommendation).join('');
+    $('recList').querySelectorAll('.submit-btn').forEach((button) =>
+      button.addEventListener('click', () => submitRecommendation(button.dataset.symbol, button)));
   } catch (e) {
     $('recommendBody').className = 'answer-body is-error';
     $('recommendBody').textContent = 'Request failed: ' + e.message;
@@ -727,7 +738,115 @@ function renderRecommendation(rec) {
       </div>
       <div class="rec-rationale">${rec.rationale}</div>
       ${warnings}
+      ${renderSubmitRow(rec)}
+      <div class="submit-result" id="submit-result-${rec.symbol}" hidden></div>
     </div>`;
+}
+
+/*
+ * Submitting is a two-click action: the first arms, the second sends. Orders are outward-facing
+ * and a market entry is not undoable, so a single stray click should not reach the venue.
+ */
+function renderSubmitRow(rec) {
+  if (!rec.economics.viable) {
+    return '<div class="rec-actions"><span class="submit-note">' +
+      'Marked unviable — submission is refused for this plan.</span></div>';
+  }
+  const production = state.environment === 'PRODUCTION';
+  const blocked = production && !(state.orderCapability || {}).productionSubmission;
+  const reason = blocked
+    ? `Production submission is disabled: ${(state.orderCapability || {}).productionBlockReason || ''}`
+    : `Sends both legs to ${production ? 'PRODUCTION' : 'Sandbox'}.`;
+
+  return `
+    <div class="rec-actions">
+      <button type="button" class="submit-btn" data-symbol="${rec.symbol}"
+              ${blocked ? 'disabled' : ''}>Submit orders</button>
+      <label class="ext-toggle" title="Outside 09:30-16:00 ET a market order is not accepted; the entry is sent as a marketable limit instead.">
+        <input type="checkbox" class="ext-hours" data-symbol="${rec.symbol}">
+        <span>Allow extended hours</span>
+      </label>
+      <span class="submit-note">${reason}</span>
+    </div>`;
+}
+
+async function submitRecommendation(symbol, button) {
+  const rec = (state.lastRecommendations || []).find((r) => r.symbol === symbol);
+  if (!rec) return;
+
+  // First click arms; second click within the window actually sends.
+  if (state.armedSubmit !== symbol) {
+    state.armedSubmit = symbol;
+    document.querySelectorAll('.submit-btn').forEach((b) => {
+      b.classList.remove('confirming');
+      if (b.dataset.symbol !== symbol) b.textContent = 'Submit orders';
+    });
+    button.classList.add('confirming');
+    const entry = rec.legs[0].description;
+    const exit = rec.legs[1].description;
+    button.textContent = `Confirm: ${entry} then ${exit}`;
+    setTimeout(() => {
+      if (state.armedSubmit === symbol) {
+        state.armedSubmit = null;
+        button.classList.remove('confirming');
+        button.textContent = 'Submit orders';
+      }
+    }, 8000);
+    return;
+  }
+
+  state.armedSubmit = null;
+  button.classList.remove('confirming');
+  button.disabled = true;
+  button.textContent = 'Submitting…';
+
+  const extended = document.querySelector(`.ext-hours[data-symbol="${symbol}"]`);
+  const box = $(`submit-result-${symbol}`);
+  box.hidden = false;
+  box.className = 'submit-result warn';
+  box.textContent = 'Sending…';
+
+  try {
+    const result = await postJson('/api/orders/submit', {
+      environment: state.environment,
+      accountId: state.accountId,
+      symbol: rec.symbol,
+      universe: rec.universe,
+      quantity: Number(rec.legs[0].quantity),
+      targetPrice: Number(rec.economics.targetPrice),
+      horizonSessions: rec.horizonSessions,
+      // Lets the server refuse if the market has moved away from what this card shows.
+      expectedEntryPrice: Number(rec.economics.entryPrice),
+      allowExtendedHours: extended ? extended.checked : false,
+    });
+    renderSubmission(box, result);
+  } catch (e) {
+    box.className = 'submit-result failed';
+    box.textContent = 'Request failed: ' + e.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Submit orders';
+  }
+}
+
+function renderSubmission(box, result) {
+  if (!result.accepted) {
+    box.className = 'submit-result failed';
+    const legError = result.entry && result.entry.error ? `<br>${result.entry.error}` : '';
+    box.innerHTML = (result.refusedReason || 'Not submitted.') + legError;
+    return;
+  }
+  const leg = (l) => l
+    ? `<span class="leg">${l.side} ${l.quantity} ${l.orderType}` +
+      `${l.limitPrice ? ' @ ' + money(l.limitPrice) : ''} (${l.timeInForce}) — ${l.status}` +
+      `${l.filledPrice ? ' filled ' + money(l.filledPrice) : ''}${l.error ? ' — ' + l.error : ''}</span>`
+    : '';
+  // "unprotected" means the entry filled but no exit is resting - the one state worth shouting
+  // about, because it looks like success and is not.
+  box.className = 'submit-result ' + (result.unprotected ? 'warn' : 'ok');
+  box.innerHTML = `<strong>Submitted to ${result.environment}</strong>`
+    + leg(result.entry) + leg(result.exit)
+    + (result.notes.length ? `<ul>${result.notes.map((n) => `<li>${n}</li>`).join('')}</ul>` : '');
 }
 
 /* ── wiring ──────────────────────────────────────────────────────── */
@@ -811,6 +930,7 @@ function start() {
   setInterval(tickClock, 1000);
 
   refreshStatus();
+  loadOrderCapability();
   loadQuotes();
   loadEnvironments();
   loadActions();

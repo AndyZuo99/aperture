@@ -16,6 +16,7 @@ Java 21 · Spring Boot 3.5 · H2 + Flyway · Anthropic Java SDK · dependency-fr
 | **Accounts** | The account holder's real Webull accounts across Production and Sandbox, with balances and positions as the broker reports them. |
 | **Tradable universe** | The securities the *selected account* can actually trade, driven by its account class: event contracts, futures, crypto or equities. |
 | **LLM analyst** | Claude with a read-only toolkit over the live services. Answers questions, and **recommends trades** as a market entry plus a resting GTC exit. It cannot place them, structurally. |
+| **Order submission** | A human can send a recommendation's two legs to the broker. Sandbox freely; production behind a two-condition gate. |
 
 ---
 
@@ -196,11 +197,60 @@ flattering one would be worse than useless.
 It also flags simulated pricing, thin historical samples, and weak hit rates. The entry is the
 **ask**, not the last print, because a market buy lifts the offer.
 
-### It still cannot trade
+### Submitting the orders
 
-The recommender changes what the analyst *says*, not what it can *do*. `AnalystToolkit` still has
-no mutating method, `AnalystToolkitIsReadOnlyTest` still fails the build if one appears, and
-Aperture has no order-submission path at all. Recommendations are output; a human places them.
+Each recommendation carries a **Submit orders** button that sends both legs to the broker.
+
+**The model still cannot trade.** Submission lives in its own `trading` package, is absent from
+`AnalystToolkit`, and is reachable only from an HTTP endpoint a human triggers.
+`AnalystToolkitIsReadOnlyTest` still fails the build if a mutating method appears on the toolkit,
+so the separation is enforced rather than intended.
+
+Four things the submission path does that a naive "place the order" would not:
+
+**It re-plans before sending.** The endpoint takes the plan's *inputs* — symbol, quantity, target —
+never its computed economics, and re-prices everything server-side. A browser tab left open for an
+hour cannot submit against a price that has moved on. If the live ask has drifted more than 1% from
+what the card showed, it refuses: a market order offers no protection from a gap the operator never
+agreed to.
+
+**It sequences the legs.** The exit is a sell for shares the account does not own until the entry
+fills. Firing both at once risks the venue rejecting the sell, or accepting it as a short. So the
+entry goes first, its fill is polled, and **the exit is sized to what actually filled** — a partial
+fill must not leave a sell order for more stock than is held.
+
+**It knows a market order is a regular-hours instrument.** Outside 09:30–16:00 the venue accepts
+limit orders only. Rather than discovering that from an error code, Aperture refuses with a reason
+— or, if extended hours are explicitly allowed, converts the entry to a **marketable limit** 20bp
+above the ask. That is both what the venue permits and the safer instrument: an unpriced order into
+a thin after-hours book is how people get filled badly.
+
+**It reports each leg separately.** An entry can fill while the exit is rejected, which looks like
+success and is not. That state is flagged `unprotected`, because a filled position with no resting
+exit is the one outcome worth shouting about.
+
+A real sandbox submission, outside market hours:
+
+```
+Submitted to SANDBOX
+  BUY  55 LIMIT @ 145.19 (DAY)  — FILLED, filled 144.33
+  SELL 55 LIMIT @ 148.50 (GTC)  — SUBMITTED
+  The market is closed, so the entry was sent as a marketable limit at 145.19 rather than a
+  market order — extended-hours trading accepts limit orders only.
+```
+
+### Production stays gated
+
+Sandbox submits freely; it is paper. Production requires **both** conditions on
+`ApertureProperties.Webull` — the boolean *and* the confirmation phrase — checked before a trading
+client is even acquired. The UI disables the button and shows why.
+[`OrderSubmissionGateTest`](src/test/java/dev/aperture/trading/OrderSubmissionGateTest.java)
+asserts each condition alone is insufficient, and that a refused submission never reaches for a
+client at all.
+
+The button itself is two-click: the first arms, the second sends, and the confirm step spells out
+the exact orders (`Confirm: BUY 55 MARKET (DAY) then SELL 55 LIMIT @ 148.50 (GTC)`). A market
+entry is not undoable, so one stray click should not reach a venue.
 
 ---
 
@@ -213,6 +263,7 @@ marketdata/   QuoteSource implementations, price history, scheduler
 corporate/    CorporateAction hierarchy, PriceBasis, PriceAdjuster
 account/      Webull accounts, balances, positions, environment model
 instrument/   Instrument registry, symbol→id mapping, tradable universe + catalog
+trading/      Order submission - separate from ai/, and unreachable from it
 analysis/     Forward-window hit rates, drawdowns, moving averages
 time/         Exchange calendar, session clock
 persistence/  JPA entity + repository for corporate actions
@@ -268,6 +319,13 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 - `getDividendCalendar(symbol, category)` — real cash dividends. Note the argument order; reversing
   it returns `417 UNSUPPORTED_CATEGORY` naming the *symbol* as the bad category.
 - `getQuote(depth=1)`, `getInstruments`, `getCompanyProfile`, and the whole v3 trade API.
+- **Order placement has three undocumented required fields**, each discovered from a rejection:
+  `comboType` (`NORMAL` for a standalone order, else `invalid combo_type`), `entrustType` (`QTY`),
+  and `supportTradingSession`. That last one is the interesting one: `N` means regular hours and is
+  the *only* value a MARKET order accepts, while `ALL` permits extended hours and is valid on LIMIT
+  orders only — sending `ALL` with a market order fails as
+  `invalid support_trading_session, value: ALL`. Together those encode a real brokerage rule:
+  extended-hours trading is limit-only.
 - **The batch caps differ per endpoint and are enforced strictly.** `getBatchBars` takes a hard
   **20** symbols (`417 ILLEGAL_PARAMETER: symbols size must be between 1 and 20`), while
   `getSnapshots` handles 50+ comfortably. Sharing one batch-size constant between them is a latent
@@ -323,7 +381,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 134 tests
+mvn test        # 140 tests
 ```
 
 The ones worth reading:
@@ -347,6 +405,9 @@ The ones worth reading:
   is a 100% hit rate, not 0%. Also the horizon boundary, cut deliberately on both sides.
 - [`TradePlannerTest`](src/test/java/dev/aperture/ai/TradePlannerTest.java) — that a target below
   the entry, or a gain smaller than the spread, is rejected rather than priced.
+- [`OrderSubmissionGateTest`](src/test/java/dev/aperture/trading/OrderSubmissionGateTest.java) —
+  every case asserts submission is *refused*, because a gate is only worth having if it has been
+  shown to shut.
 
 ---
 
@@ -361,9 +422,14 @@ Stated plainly, because pretending otherwise would be the more serious flaw.
   a corporate-actions vendor.
 - **The dividend calendar is forward-looking.** It does not backfill years of history, so a
   total-return series only reflects dividends within its reach.
-- **No order placement.** The wiring and the gate are here; the submission path is deliberately
-  not. The recommender produces order tickets a human enters. Given the goal — a portfolio piece,
-  not a trading bot — a bug reaching real money is a genuine loss with no upside.
+- **Production order submission is off by default** and needs two deliberate configuration
+  changes to enable. Sandbox submission is fully working and verified. Given the goal — a
+  portfolio piece, not a trading bot — a bug reaching real money is a genuine loss with no upside.
+- **The two legs are sent as separate orders, not a venue-native bracket.** Webull supports
+  OTO/OCO/OTOCO combos, which would let the venue trigger the exit off the entry's fill instead of
+  Aperture polling for it. That is the better shape and is not implemented: the current path polls
+  for up to six seconds and, if the entry has not filled, reports that the exit was not placed
+  rather than leaving it to chance.
 - **Futures can be listed but not analysed.** `getFuturesBars` returns `403
   MARKET_DATA_NOT_SUBSCRIBED` on this entitlement, so no historical odds can be computed for a
   futures contract and the recommender declines to propose one. Equities, crypto and event
