@@ -1,0 +1,19 @@
+# Build output. Note ~/Documents is iCloud-synced and duplicates build artefacts as
+# "Foo 2.class", which lands duplicate classes on the classpath - always `mvn clean`.
+target/
+
+# H2 database. Contains recorded corporate actions; re-seeded on first run.
+data/
+
+# The Webull SDK caches its access token here, relative to the working directory.
+conf/
+
+# Credentials never belong in the repository.
+.env
+*.pem
+
+# Editor and OS noise
+.idea/
+*.iml
+.vscode/
+.DS_Store

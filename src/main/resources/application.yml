@@ -1,0 +1,98 @@
+spring:
+  application:
+    name: aperture
+
+  datasource:
+    # File-backed H2 so declared corporate actions survive a restart.
+    # AUTO_SERVER=TRUE and DB_CLOSE_ON_EXIT=FALSE are mutually exclusive in H2 - setting both
+    # fails at startup with an unhelpful message about the URL.
+    url: jdbc:h2:file:./data/aperture;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    # Flyway owns the schema. Letting Hibernate also manage it means two things writing DDL and
+    # a schema that depends on which one ran last.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+  error:
+    include-message: always
+
+aperture:
+  webull:
+    # Credentials come from the environment. Never commit them - the app key alone authenticates
+    # as the account holder.
+    app-key: ${WEBULL_APP_KEY:}
+    app-secret: ${WEBULL_APP_SECRET:}
+
+    # The Webull sandbox is a SEPARATE credential domain, not the same account at a different
+    # address. Production keys sent to api.sandbox.webull.com return 401 UNAUTHORIZED. Leave these
+    # blank unless the developer portal has issued sandbox keys; Aperture then reports the sandbox
+    # as unconfigured rather than surfacing a confusing auth error.
+    sandbox-app-key: ${WEBULL_SANDBOX_APP_KEY:}
+    sandbox-app-secret: ${WEBULL_SANDBOX_APP_SECRET:}
+
+    region-id: us
+    enabled: true
+    default-environment: SANDBOX
+
+    # Two independent conditions gate live order submission. See ApertureProperties.Webull.
+    # Read-only production access - quotes, balances, positions - is NOT gated by these.
+    allow-live-trading: false
+    live-trading-confirmation: ""
+
+  market-data:
+    watchlist:
+      - AAPL
+      - MSFT
+      - NVDA
+      - AMZN
+      - GOOGL
+      - META
+      - TSLA
+      - JPM
+      - V
+      - SPY
+    # The vendor rate-limits aggressively (429 TOO_MANY_REQUESTS after only a handful of rapid
+    # calls), and streaming instruments are not polled at all, so this is a backstop rather than
+    # the main path.
+    poll-interval: 3s
+    stale-after: 15s
+    history-days: 250
+    streaming-enabled: true
+    resubscribe-interval: 5m
+
+  analyst:
+    enabled: true
+    model: claude-opus-5
+    api-key: ${ANTHROPIC_API_KEY:}
+    max-tool-iterations: 8
+    max-tokens: 16000
+
+logging:
+  level:
+    root: INFO
+    dev.aperture: INFO
+    # The SDK logs a full stack trace at ERROR for every failed request, including refusals that
+    # Aperture handles deliberately. Quieten it so a handled 403 does not look like a crash.
+    com.webull.openapi.core.http.HttpApiClient: OFF
+    com.webull.openapi.core.http.initializer: WARN
+    org.hibernate.orm.deprecation: ERROR

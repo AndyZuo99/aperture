@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aperture</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>◧</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">◧</span>
+    <span class="name">Aperture</span>
+  </div>
+
+  <!-- Environment switch. Production is visually distinct from sandbox at all times: the one
+       mistake with no undo is acting on the wrong one. -->
+  <div class="env-switch" id="envSwitch" role="group" aria-label="Trading environment">
+    <button class="env-btn" data-env="SANDBOX" aria-pressed="true">Sandbox</button>
+    <button class="env-btn" data-env="PRODUCTION" aria-pressed="false">Production</button>
+  </div>
+
+  <label class="account-picker">
+    <span class="label">Account</span>
+    <select id="accountSelect" aria-label="Account"></select>
+  </label>
+
+  <div class="feed" id="feedStatus">
+    <span class="dot" id="feedDot"></span>
+    <span class="feed-text" id="feedText">Connecting…</span>
+  </div>
+
+  <div class="clock" id="sessionClock"></div>
+</header>
+
+<!-- Shown only while quotes are simulated. A trader must never have to infer that. -->
+<div class="banner banner-warn" id="simBanner" hidden>
+  <strong>Simulated data.</strong>
+  <span id="simBannerDetail">These prices are generated locally and are not market data.</span>
+</div>
+
+<!-- Shown only in production. -->
+<div class="banner banner-live" id="prodBanner" hidden>
+  <strong>Production account.</strong>
+  <span id="prodBannerDetail">Balances and positions are real.</span>
+</div>
+
+<main class="layout">
+
+  <!-- ── Watchlist ─────────────────────────────────────────────── -->
+  <section class="panel watchlist">
+    <div class="panel-head">
+      <h2>Watchlist</h2>
+      <span class="hint" id="quoteCount"></span>
+    </div>
+    <div class="table-scroll">
+      <table class="grid" id="quoteGrid">
+        <thead>
+          <tr>
+            <th class="sym">Symbol</th>
+            <th class="num">Last</th>
+            <th class="num">Change</th>
+            <th class="num">%</th>
+            <th class="num">Bid</th>
+            <th class="num">Ask</th>
+            <th class="num">Spread</th>
+            <th class="num">Volume</th>
+            <th class="src">Source</th>
+          </tr>
+        </thead>
+        <tbody id="quoteBody">
+          <tr class="empty"><td colspan="9">Waiting for quotes…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Chart ─────────────────────────────────────────────────── -->
+  <section class="panel chart-panel">
+    <div class="panel-head">
+      <h2><span id="chartSymbol">—</span> <span class="sub" id="chartName"></span></h2>
+
+      <!-- The adjustment basis is a first-class control, not a setting buried somewhere.
+           Which basis a series is on changes what the chart means. -->
+      <div class="policy-switch" id="policySwitch" role="group" aria-label="Adjustment basis">
+        <button class="policy-btn" data-policy="NONE">Unadjusted</button>
+        <button class="policy-btn is-active" data-policy="SPLITS_ONLY">Split-adjusted</button>
+        <button class="policy-btn" data-policy="TOTAL_RETURN">Total return</button>
+      </div>
+    </div>
+
+    <div class="chart-meta">
+      <span class="stat"><span class="stat-label">Return</span> <span id="chartReturn">—</span></span>
+      <span class="stat"><span class="stat-label">Volatility</span> <span id="chartVol">—</span></span>
+      <span class="stat"><span class="stat-label">Basis</span> <span id="chartBasis">—</span></span>
+    </div>
+
+    <!-- Set when the delivered basis is not the one requested. -->
+    <p class="note" id="chartNote" hidden></p>
+
+    <canvas id="chartCanvas" height="260" aria-label="Price history"></canvas>
+    <p class="empty-chart" id="chartEmpty">Select a symbol. Daily history needs a live Webull connection.</p>
+  </section>
+
+  <!-- ── Account ───────────────────────────────────────────────── -->
+  <section class="panel account-panel">
+    <div class="panel-head">
+      <h2>Account</h2>
+      <span class="hint" id="accountHint"></span>
+    </div>
+    <div class="balances" id="balances"></div>
+    <div class="table-scroll">
+      <table class="grid" id="positionGrid">
+        <thead>
+          <tr>
+            <th class="sym">Symbol</th>
+            <th class="num">Qty</th>
+            <th class="num">Cost</th>
+            <th class="num">Last</th>
+            <th class="num">Value</th>
+            <th class="num">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody id="positionBody">
+          <tr class="empty"><td colspan="6">No positions.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Corporate actions ─────────────────────────────────────── -->
+  <section class="panel actions-panel">
+    <div class="panel-head">
+      <h2>Corporate actions</h2>
+      <span class="hint" id="actionHint"></span>
+    </div>
+    <div class="table-scroll">
+      <table class="grid" id="actionGrid">
+        <thead>
+          <tr>
+            <th class="sym">Symbol</th>
+            <th>Ex-date</th>
+            <th>Event</th>
+            <th class="src">Source</th>
+          </tr>
+        </thead>
+        <tbody id="actionBody">
+          <tr class="empty"><td colspan="4">None recorded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Analyst ───────────────────────────────────────────────── -->
+  <section class="panel analyst-panel">
+    <div class="panel-head">
+      <h2>Analyst</h2>
+      <span class="hint" id="analystHint"></span>
+    </div>
+
+    <form class="ask" id="askForm">
+      <input type="text" id="askInput" autocomplete="off"
+             placeholder="Ask about the book — e.g. “Is NVDA's 12-month return real or a split?”">
+      <button type="submit" id="askButton">Ask</button>
+    </form>
+
+    <div class="suggestions" id="suggestions">
+      <button type="button" class="chip">Which watchlist name has the widest spread right now?</button>
+      <button type="button" class="chip">Compare NVDA's return unadjusted vs total return.</button>
+      <button type="button" class="chip">Summarise my account and largest position.</button>
+    </div>
+
+    <div class="answer" id="answer" hidden>
+      <div class="answer-meta" id="answerMeta"></div>
+      <div class="answer-body" id="answerBody"></div>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

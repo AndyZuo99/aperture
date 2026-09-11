@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.16</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>dev.aperture</groupId>
+  <artifactId>aperture</artifactId>
+  <version>1.0.0</version>
+  <name>aperture</name>
+  <description>Live equities market data and trading console on the Webull OpenAPI, with an LLM analyst</description>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <anthropic.version>2.61.0</anthropic.version>
+    <webull.version>2.0.0</webull.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- Anthropic SDK: powers the LLM market analyst (see dev.aperture.ai). -->
+    <dependency>
+      <groupId>com.anthropic</groupId>
+      <artifactId>anthropic-java</artifactId>
+      <version>${anthropic.version}</version>
+    </dependency>
+
+    <!--
+      Webull OpenAPI: quotes, streaming market data, and the trade/account API.
+      The exclusions are load-bearing, not tidying:
+        - commons-logging collides with Spring's spring-jcl (duplicate LogFactory).
+        - log4j-1.2-api collides with the Boot-managed log4j-to-slf4j bridge.
+      grpc-all and hivemq-mqtt-client must STAY. The SDK's classes fail to load without them,
+      and the MQTT client is the live streaming quote path (see WebullStreamingQuoteSource).
+    -->
+    <dependency>
+      <groupId>com.webull.openapi</groupId>
+      <artifactId>webull-openapi-java-sdk</artifactId>
+      <version>${webull.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>commons-logging</groupId>
+          <artifactId>commons-logging</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.logging.log4j</groupId>
+          <artifactId>log4j-1.2-api</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
+    <!--
+      The Webull SDK signs every request with javax.xml.bind.DatatypeConverter, which left the
+      JDK in Java 11 and which the SDK does not declare as a dependency.
+
+      This MUST be javax.xml.bind:jaxb-api and NOT jakarta.xml.bind:jakarta.xml.bind-api pinned
+      back to 2.3.x. Spring Boot manages the jakarta artifact at 4.x for Hibernate; downgrading
+      it to obtain the javax classes breaks Hibernate with
+      NoClassDefFoundError: jakarta/xml/bind/JAXBException.
+      Separate coordinates - both coexist happily.
+    -->
+    <dependency>
+      <groupId>javax.xml.bind</groupId>
+      <artifactId>jaxb-api</artifactId>
+      <version>2.3.1</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!--
+            A src/test/resources/application.yml would SHADOW src/main/resources/application.yml
+            on the classpath rather than merge with it, so tests would silently run against
+            different settings than the app. Test overrides live in application-test.yml and are
+            layered on top by activating the profile here.
+          -->
+          <systemPropertyVariables>
+            <spring.profiles.active>test</spring.profiles.active>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,259 @@
+/*
+ * Aperture — trading console.
+ *
+ * No framework and no build step: the whole UI is this file plus app.js, so it can be read
+ * without a toolchain. Dark by default because that is what a trading desk actually uses, and
+ * because green/red on dark is the convention every trader already reads fluently.
+ */
+
+:root {
+  --bg:          #0d1117;
+  --bg-panel:    #141b24;
+  --bg-raised:   #1b232e;
+  --bg-hover:    #222c38;
+  --border:      #263140;
+  --border-soft: #1d2630;
+
+  --text:        #e5ecf3;
+  --text-dim:    #8b9bab;
+  --text-faint:  #5a6b7b;
+
+  --up:          #26c281;
+  --up-soft:     rgba(38, 194, 129, 0.14);
+  --down:        #ef5350;
+  --down-soft:   rgba(239, 83, 80, 0.14);
+
+  --accent:      #4c8dff;
+  --accent-soft: rgba(76, 141, 255, 0.14);
+  --warn:        #e8b339;
+  --warn-soft:   rgba(232, 179, 57, 0.12);
+  --live:        #ef5350;
+
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/*
+ * An author `display:` on a class beats the user-agent's [hidden] rule, so a panel styled
+ * `display: flex` renders even when hidden. Without this the analyst answer and the banners
+ * appear on load.
+ */
+[hidden] { display: none !important; }
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Top bar ───────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 16px;
+  height: 48px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: .3px; }
+.brand .mark { color: var(--accent); font-size: 16px; }
+.brand .name { font-size: 14px; }
+
+.env-switch { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+
+.env-btn {
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.env-btn:hover { color: var(--text); }
+.env-btn[aria-pressed="true"] { background: var(--bg-raised); color: var(--text); }
+/* Production is never the same colour as sandbox, at any point in the UI. */
+.env-btn[data-env="PRODUCTION"][aria-pressed="true"] { background: var(--down-soft); color: var(--live); }
+.env-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.account-picker { display: flex; align-items: center; gap: 8px; }
+.account-picker .label { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+
+select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  min-width: 190px;
+}
+select:disabled { color: var(--text-faint); }
+
+.feed { display: flex; align-items: center; gap: 7px; margin-left: auto; font-size: 12px; color: var(--text-dim); }
+.feed .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.feed .dot.live { background: var(--up); box-shadow: 0 0 6px var(--up); }
+.feed .dot.sim  { background: var(--warn); }
+.feed .dot.down { background: var(--down); }
+
+.clock { font-family: var(--mono); font-size: 12px; color: var(--text-dim); min-width: 150px; text-align: right; }
+
+/* ── Banners ───────────────────────────────────────────────────── */
+
+.banner { padding: 8px 16px; font-size: 12px; border-bottom: 1px solid var(--border); }
+.banner strong { font-weight: 600; }
+.banner-warn { background: var(--warn-soft); color: var(--warn); }
+.banner-live { background: var(--down-soft); color: var(--live); }
+
+/* ── Layout ────────────────────────────────────────────────────── */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  grid-template-areas:
+    "watchlist chart"
+    "watchlist account"
+    "actions   analyst";
+  gap: 12px;
+  padding: 12px;
+  align-items: start;
+}
+
+.watchlist     { grid-area: watchlist; }
+.chart-panel   { grid-area: chart; }
+.account-panel { grid-area: account; }
+.actions-panel { grid-area: actions; }
+.analyst-panel { grid-area: analyst; }
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "watchlist" "chart" "account" "actions" "analyst";
+  }
+}
+
+/* ── Panels ────────────────────────────────────────────────────── */
+
+.panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.panel-head h2 { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px; color: var(--text-dim); }
+.panel-head h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-faint); margin-left: 6px; }
+.panel-head .hint { margin-left: auto; font-size: 11px; color: var(--text-faint); }
+
+/* ── Tables ────────────────────────────────────────────────────── */
+
+.table-scroll { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+
+.grid { width: 100%; border-collapse: collapse; font-size: 12px; }
+.grid th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  text-align: left;
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--text-faint);
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.grid td { padding: 7px 10px; border-bottom: 1px solid var(--border-soft); white-space: nowrap; }
+.grid tbody tr:hover { background: var(--bg-hover); }
+.grid tbody tr.is-selected { background: var(--accent-soft); }
+.grid tbody tr { cursor: pointer; }
+.grid .num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.grid .sym { font-weight: 600; }
+.grid .src { text-align: right; }
+.grid tr.empty td { color: var(--text-faint); text-align: center; padding: 20px; cursor: default; }
+.grid tr.empty:hover { background: none; }
+
+.up   { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--text-dim); }
+
+/* A brief tint when a price changes, so the eye catches movement without watching every row. */
+@keyframes flash-up   { from { background: var(--up-soft); }   to { background: transparent; } }
+@keyframes flash-down { from { background: var(--down-soft); } to { background: transparent; } }
+.flash-up   { animation: flash-up .55s ease-out; }
+.flash-down { animation: flash-down .55s ease-out; }
+
+.badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; letter-spacing: .3px; }
+.badge-live { background: var(--up-soft); color: var(--up); }
+.badge-sim  { background: var(--warn-soft); color: var(--warn); }
+.badge-vendor { background: var(--accent-soft); color: var(--accent); }
+.badge-ref  { background: var(--bg-raised); color: var(--text-dim); }
+
+/* ── Chart ─────────────────────────────────────────────────────── */
+
+.policy-switch { display: flex; gap: 2px; margin-left: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+.policy-btn {
+  background: none; border: 0; color: var(--text-dim); font: inherit; font-size: 11px;
+  padding: 4px 9px; border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.policy-btn:hover { color: var(--text); }
+.policy-btn.is-active { background: var(--bg-raised); color: var(--accent); }
+
+.chart-meta { display: flex; gap: 18px; padding: 9px 14px; border-bottom: 1px solid var(--border-soft); font-size: 12px; flex-wrap: wrap; }
+.stat { font-family: var(--mono); }
+.stat-label { font-family: var(--sans); color: var(--text-faint); font-size: 11px; margin-right: 4px; }
+
+.note { margin: 0; padding: 8px 14px; background: var(--warn-soft); color: var(--warn); font-size: 11px; border-bottom: 1px solid var(--border-soft); }
+
+#chartCanvas { display: block; width: 100%; padding: 8px 4px; }
+.empty-chart { margin: 0; padding: 40px 14px; text-align: center; color: var(--text-faint); font-size: 12px; }
+
+/* ── Account ───────────────────────────────────────────────────── */
+
+.balances { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 1px; background: var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+.balance { background: var(--bg-panel); padding: 9px 12px; }
+.balance-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); margin-bottom: 3px; }
+.balance-value { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.balances:empty { display: none; }
+
+/* ── Analyst ───────────────────────────────────────────────────── */
+
+.ask { display: flex; gap: 8px; padding: 12px 14px; }
+.ask input {
+  flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  padding: 8px 11px; color: var(--text); font: inherit; font-size: 12px;
+}
+.ask input:focus { outline: none; border-color: var(--accent); }
+.ask button {
+  background: var(--accent); border: 0; border-radius: 5px; color: #fff; font: inherit;
+  font-size: 12px; font-weight: 500; padding: 8px 16px; cursor: pointer;
+}
+.ask button:disabled { opacity: .5; cursor: default; }
+
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 12px; }
+.chip {
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: 12px;
+  color: var(--text-dim); font: inherit; font-size: 11px; padding: 4px 10px; cursor: pointer;
+}
+.chip:hover { color: var(--text); border-color: var(--accent); }
+
+.answer { border-top: 1px solid var(--border-soft); padding: 12px 14px; }
+.answer-meta { font-size: 11px; color: var(--text-faint); margin-bottom: 8px; font-family: var(--mono); }
+.answer-body { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.answer-body.is-error { color: var(--down); }

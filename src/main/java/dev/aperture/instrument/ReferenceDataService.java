@@ -1,0 +1,131 @@
+package dev.aperture.instrument;
+
+import dev.aperture.config.ApertureProperties;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Service;
+
+/**
+ * The instrument registry: the mapping from tickers to stable {@link InstrumentId}s.
+ *
+ * <p>Seeded from the configured watchlist at startup and extended at runtime when a symbol is
+ * adopted. Symbols map onto ids, never the reverse, so a ticker rename updates one mapping
+ * instead of rewriting every position and order that referenced it.
+ */
+@Service
+public class ReferenceDataService {
+
+    private final Map<InstrumentId, Instrument> byId = new ConcurrentHashMap<>();
+    private final Map<String, InstrumentId> bySymbol = new ConcurrentHashMap<>();
+
+    public ReferenceDataService(ApertureProperties properties) {
+        for (String symbol : properties.marketData().watchlist()) {
+            String normalised = symbol.trim().toUpperCase();
+            if (normalised.isEmpty()) {
+                continue;
+            }
+            register(new Instrument(
+                    InstrumentId.of(normalised),
+                    normalised,
+                    nameFor(normalised),
+                    typeFor(normalised),
+                    "NASDAQ",
+                    "USD",
+                    Optional.empty(),
+                    true));
+        }
+    }
+
+    public Instrument register(Instrument instrument) {
+        byId.put(instrument.id(), instrument);
+        bySymbol.put(instrument.primarySymbol(), instrument.id());
+        return instrument;
+    }
+
+    public Optional<Instrument> byId(InstrumentId id) {
+        return Optional.ofNullable(byId.get(id));
+    }
+
+    /** Resolves a ticker to an instrument, case-insensitively. */
+    public Optional<Instrument> resolve(String symbol) {
+        if (symbol == null || symbol.isBlank()) {
+            return Optional.empty();
+        }
+        InstrumentId id = bySymbol.get(symbol.trim().toUpperCase());
+        return id == null ? Optional.empty() : byId(id);
+    }
+
+    public boolean isKnown(String symbol) {
+        return resolve(symbol).isPresent();
+    }
+
+    /** Every instrument, in a stable order so the UI does not reshuffle between refreshes. */
+    public List<Instrument> all() {
+        return byId.values().stream()
+                .sorted(java.util.Comparator.comparing(Instrument::primarySymbol))
+                .toList();
+    }
+
+    public List<Instrument> tradable() {
+        return all().stream().filter(Instrument::isTradable).toList();
+    }
+
+    public Collection<InstrumentId> allIds() {
+        return List.copyOf(byId.keySet());
+    }
+
+    /**
+     * Records a ticker rename, keeping the instrument id stable.
+     *
+     * <p>The old symbol stops resolving, which is deliberate: after META, a lookup of "FB" should
+     * fail loudly rather than quietly return a different company's data.
+     */
+    public Optional<Instrument> rename(InstrumentId id, String newSymbol) {
+        return byId(id).map(existing -> {
+            bySymbol.remove(existing.primarySymbol());
+            Instrument renamed = existing.renamedTo(newSymbol.toUpperCase());
+            return register(renamed);
+        });
+    }
+
+    public Map<String, Instrument> bySymbolMap() {
+        Map<String, Instrument> out = new LinkedHashMap<>();
+        for (Instrument instrument : all()) {
+            out.put(instrument.primarySymbol(), instrument);
+        }
+        return out;
+    }
+
+    /**
+     * Display names for the default watchlist. Webull's own {@code getCompanyProfile} is
+     * authoritative and is used when the feed is live; this only has to be reasonable offline.
+     */
+    private static String nameFor(String symbol) {
+        return switch (symbol) {
+            case "AAPL" -> "Apple Inc.";
+            case "MSFT" -> "Microsoft Corporation";
+            case "NVDA" -> "NVIDIA Corporation";
+            case "AMZN" -> "Amazon.com, Inc.";
+            case "GOOGL" -> "Alphabet Inc. Class A";
+            case "META" -> "Meta Platforms, Inc.";
+            case "TSLA" -> "Tesla, Inc.";
+            case "JPM" -> "JPMorgan Chase & Co.";
+            case "V" -> "Visa Inc.";
+            case "SPY" -> "SPDR S&P 500 ETF Trust";
+            case "QQQ" -> "Invesco QQQ Trust";
+            case "IWM" -> "iShares Russell 2000 ETF";
+            default -> symbol;
+        };
+    }
+
+    private static SecurityType typeFor(String symbol) {
+        return switch (symbol) {
+            case "SPY", "QQQ", "IWM", "VTI", "VOO" -> SecurityType.ETF;
+            default -> SecurityType.COMMON_STOCK;
+        };
+    }
+}
