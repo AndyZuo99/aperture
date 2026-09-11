@@ -123,7 +123,29 @@ public class MarketAnalyst {
                 turns++;
                 Message response = client.messages().create(paramsFor(conversation));
 
-                if (response.stopReason().orElse(null) != StopReason.TOOL_USE) {
+                if (log.isDebugEnabled()) {
+                    log.debug("Turn {}: stopReason={} blocks=[{}]", turns,
+                            response.stopReason().map(Object::toString).orElse("none"),
+                            response.content().stream()
+                                    .map(b -> b.type().toString())
+                                    .collect(java.util.stream.Collectors.joining(", ")));
+                }
+
+                // StopReason is NOT a Java enum - it is a final class implementing the SDK's
+                // own Enum interface, with static constants and a real equals(). Comparing it
+                // with == or != compares object identity, which is always false, so the loop
+                // silently treated every tool-use turn as a finished answer: the model's
+                // preamble text was returned and its tool calls were dropped on the floor.
+                // Nothing throws, and the reply reads like a plausible non-answer.
+                StopReason stopReason = response.stopReason().orElse(null);
+
+                if (StopReason.REFUSAL.equals(stopReason)) {
+                    return AnalysisResult.failure(
+                            "The model declined to answer this request.", toolCalls,
+                            config.model(), turns,
+                            Duration.between(started, clock.now()), clock.now());
+                }
+                if (!StopReason.TOOL_USE.equals(stopReason)) {
                     return AnalysisResult.success(textOf(response), toolCalls, config.model(),
                             turns, Duration.between(started, clock.now()), clock.now());
                 }

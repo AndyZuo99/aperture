@@ -167,7 +167,20 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
   credential domain, not the same account at a different address. Aperture checks for dedicated
   sandbox keys up front so it can say that plainly instead of surfacing an auth error.
 
-**Two SDK landmines**
+**Four SDK landmines**
+- **The two SDKs disagree about OkHttp, and it only fails at runtime.** Webull depends on okhttp
+  3.14.9 (Java); the Anthropic client requires 4.12.0 (the Kotlin rewrite). Webull's copy is one
+  level shallower, so Maven's nearest-wins picks 3.x, everything compiles, the app starts, market
+  data works — and the *first analyst call* dies with
+  `NoSuchFieldError: Class okhttp3.HttpUrl does not have member field 'HttpUrl$Companion'`.
+  OkHttp 4 is deliberately binary-compatible with 3 for Java callers, so `dependencyManagement`
+  pins it up to 4.12.0 and both SDKs are happy.
+- **`StopReason` is not a Java enum.** It is a final class implementing the SDK's own `Enum`
+  interface, with static constants and a real `equals()`. Comparing it with `==` / `!=` compares
+  object identity and is *always* false, so a tool-use turn reads as a finished answer: the
+  model's preamble text gets returned and every tool call is silently dropped. Nothing throws, and
+  the reply looks like a plausible non-answer ("I'll pull quotes, feed status, and adjustment
+  comparisons.") — which is what makes it worth writing down. Use `.equals()`.
 - `new DataClient(config)` is not lazy and worse than "throws": when the token comes back `PENDING`
   it **blocks the calling thread for up to 300 seconds**. In a `@Bean` method that is not a failure,
   it is a hang, and Spring Boot never starts. Every client here is built on a daemon thread
@@ -218,9 +231,10 @@ Stated plainly, because pretending otherwise would be the more serious flaw.
   loss with no upside.
 - **Depth is one level.** Nasdaq Basic is BBO. The touch is real and the liquidity behind it is
   invisible, which the UI states rather than rendering as an empty book.
-- **Sandbox is untested end-to-end**, because no sandbox credentials were issued for this account.
-  The environment model, switching and per-environment client construction all work; the sandbox
-  side reports itself unavailable with the reason.
+- **Sandbox trades on simulated fills against real prices.** Market data is always sourced from
+  the production endpoint, because the Nasdaq entitlement lives on the real account and paper
+  trading against invented prices would defeat the point. Verified against five Webull paper
+  accounts.
 - **The UI falls back to Production** when Sandbox has no credentials, rather than showing an empty
   panel. Read-only, and the environment badge and banner both turn red — but it is a deliberate
   choice worth knowing about.
