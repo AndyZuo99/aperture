@@ -16,6 +16,10 @@ const state = {
   quotes: new Map(),   // symbol -> latest quote view
   history: null,
   asking: false,
+  universe: null,          // resolved asset class for the selected account
+  universeQuery: '',
+  universeGroup: '',
+  universeTradableOnly: true,
 };
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -362,6 +366,7 @@ function applyEnvironment() {
       (env && env.unavailableReason) ? env.unavailableReason : 'No accounts in this environment';
     $('balances').innerHTML = '';
     $('positionBody').innerHTML = '<tr class="empty"><td colspan="6">No account selected.</td></tr>';
+    loadUniverse();
     return;
   }
 
@@ -375,6 +380,9 @@ function applyEnvironment() {
   state.accountId = env.accounts[0].accountId;
   select.value = state.accountId;
   loadAccountDetail();
+  // The account class decides the universe, so a change of account changes the instrument set.
+  state.universeGroup = '';
+  loadUniverse();
 }
 
 async function loadAccountDetail() {
@@ -453,6 +461,104 @@ async function loadActions() {
   $('actionHint').textContent = `${actions.length} recorded`;
 }
 
+/* ── tradable universe ───────────────────────────────────────────── */
+
+/*
+ * Which securities the SELECTED account can trade. The universe follows the account's class
+ * (events / futures / crypto / equities), so switching accounts switches the instrument set -
+ * showing a stock list to a futures account would be listing things it cannot buy.
+ */
+async function loadUniverse() {
+  const params = new URLSearchParams({
+    environment: state.environment,
+    tradableOnly: String(state.universeTradableOnly),
+    limit: '250',
+  });
+  if (state.accountId) params.set('accountId', state.accountId);
+  if (state.universeQuery) params.set('q', state.universeQuery);
+  if (state.universeGroup) params.set('group', state.universeGroup);
+
+  try {
+    const data = await getJson('/api/instruments/tradable?' + params.toString());
+    if (data) renderUniverse(data);
+  } catch (e) {
+    $('universeHint').textContent = 'Could not load instruments';
+  }
+}
+
+function renderUniverse(data) {
+  state.universe = data.universe;
+
+  $('universeLabel').textContent = data.label.toLowerCase();
+  const badge = $('universeBadge');
+  badge.textContent = data.label;
+  badge.dataset.universe = data.universe;
+  badge.title = data.description;
+
+  $('universeFor').textContent = data.accountLabel
+    ? `for ${data.accountLabel}${data.accountClass ? ' · ' + data.accountClass : ''}`
+    : '';
+
+  const note = $('universeNote');
+  note.hidden = data.available;
+  if (!data.available) note.textContent = data.unavailableReason;
+
+  $('universeHint').textContent = data.available
+    ? `${data.matching.toLocaleString()} of ${data.total.toLocaleString()}` +
+      (data.truncated ? ` · showing first ${data.instruments.length}` : '')
+    : '';
+
+  renderGroupChips(data.groups);
+
+  // Columns are whatever the data carries: a stock has Marginable/Shortable, a futures contract
+  // has a product class, an event contract has a settlement date.
+  $('universeHead').innerHTML = `
+    <tr>
+      <th class="sym">Symbol</th>
+      <th>Name</th>
+      <th>Group</th>
+      ${data.columns.map((c) => `<th class="num">${c}</th>`).join('')}
+    </tr>`;
+
+  const body = $('universeBody');
+  if (!data.instruments.length) {
+    const reason = data.available ? 'No instruments match.' : 'Unavailable.';
+    body.innerHTML = `<tr class="empty"><td colspan="${3 + data.columns.length}">${reason}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = data.instruments.map((i) => `
+    <tr class="${i.tradable ? '' : 'not-tradable'}">
+      <td class="sym">${i.symbol}${i.tradable ? '' : ' <span class="badge badge-halted">halted</span>'}</td>
+      <td class="name" title="${escapeAttr(i.name)}">${i.name}</td>
+      <td class="flat">${i.group}</td>
+      ${data.columns.map((c) => `<td class="attr">${i.attributes[c] || '—'}</td>`).join('')}
+    </tr>`).join('');
+}
+
+function renderGroupChips(groups) {
+  const container = $('universeGroups');
+  if (!groups || groups.length <= 1) {
+    container.innerHTML = '';
+    return;
+  }
+  // Biggest groups first, capped: the event universe has hundreds of series.
+  const top = [...groups].sort((a, b) => b.count - a.count).slice(0, 14);
+  const all = `<button type="button" class="group-chip ${state.universeGroup ? '' : 'is-active'}"
+      data-group="">All</button>`;
+  container.innerHTML = all + top.map((g) => `
+    <button type="button" class="group-chip ${state.universeGroup === g.group ? 'is-active' : ''}"
+      data-group="${escapeAttr(g.group)}">${g.group}<span class="count">${g.count}</span></button>`).join('');
+
+  container.querySelectorAll('.group-chip').forEach((chip) =>
+    chip.addEventListener('click', () => {
+      state.universeGroup = chip.dataset.group;
+      loadUniverse();
+    }));
+}
+
+const escapeAttr = (value) => String(value).replace(/"/g, '&quot;');
+
 /* ── analyst ─────────────────────────────────────────────────────── */
 
 async function loadAnalystStatus() {
@@ -509,7 +615,26 @@ function wireEvents() {
 
   $('accountSelect').addEventListener('change', (event) => {
     state.accountId = event.target.value;
+    state.universeGroup = '';
     loadAccountDetail();
+    loadUniverse();
+  });
+
+  // Debounced: the filter runs server-side over a cached universe of thousands of instruments,
+  // and firing per keystroke would queue a request behind every letter.
+  let searchTimer;
+  $('universeSearch').addEventListener('input', (event) => {
+    clearTimeout(searchTimer);
+    const value = event.target.value;
+    searchTimer = setTimeout(() => {
+      state.universeQuery = value;
+      loadUniverse();
+    }, 250);
+  });
+
+  $('universeTradableOnly').addEventListener('change', (event) => {
+    state.universeTradableOnly = event.target.checked;
+    loadUniverse();
   });
 
   document.querySelectorAll('.policy-btn').forEach((button) =>

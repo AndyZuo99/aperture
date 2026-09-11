@@ -14,6 +14,7 @@ Java 21 · Spring Boot 3.5 · H2 + Flyway · Anthropic Java SDK · dependency-fr
 | **Live market data** | Streaming Level 1 over Webull's MQTT feed, with batch REST snapshots as the polling path and a local simulator as the fallback. Every quote is labelled with where it came from. |
 | **Corporate actions** | Splits and cash dividends, with a back-adjustment engine that restates history so a return spanning an ex-date is a real return. Three bases — unadjusted, split-adjusted, total return — selectable per chart. |
 | **Accounts** | The account holder's real Webull accounts across Production and Sandbox, with balances and positions as the broker reports them. |
+| **Tradable universe** | The securities the *selected account* can actually trade, driven by its account class: event contracts, futures, crypto or equities. |
 | **LLM analyst** | Claude with a read-only toolkit over the live services. It cannot trade, structurally. |
 
 ---
@@ -89,6 +90,45 @@ from both API access and any subscription bought in the Webull app. This was bui
 
 ---
 
+## The tradable universe
+
+A Webull account is not a general-purpose brokerage account. An Events account trades event
+contracts and *only* event contracts; a Futures account trades futures. Showing one watchlist to
+every account would be listing instruments most of them cannot buy, so the instrument section is
+driven by the account's **class**:
+
+| Account class | Universe | Live count |
+|---|---|---|
+| `EVENTS_CASH` | Event contracts, grouped by series | 3,165 |
+| `FUTURES` | Futures contracts, grouped by product class | 2,284 |
+| `CRYPTO` | Spot crypto pairs | 342 |
+| `INDIVIDUAL_CASH` · `INDIVIDUAL_MARGIN` · `TRADITIONAL_IRA` | Stocks & ETFs | 20,000 |
+
+Two details that took some care:
+
+**Class decides the universe, not type.** `accountType` only says CASH or MARGIN, and it is
+orthogonal: `EVENTS_CASH` and `INDIVIDUAL_CASH` are both CASH accounts that trade entirely
+different things. An unrecognised class falls back to equities — the vendor's class strings are
+open-ended, and showing stocks to an exotic account is cosmetic where defaulting to futures would
+be actively misleading.
+
+**Type decides the capabilities.** Being shortable is a property of the *security*; being able to
+short is a property of the *account*. A cash account cannot short or buy on margin at all, so
+`Marginable`, `Shortable`, `Easy to borrow` and the margin requirements are suppressed for it
+rather than shown as capabilities it does not have — the same AAPL row carries nine attribute
+columns in a margin account and four in a cash one.
+
+The four universes return genuinely different vendor shapes, so rather than one wide record where
+three quarters of the fields are always null, the class-specific facts live in an ordered
+attribute map and the table renders whatever columns the data actually carries.
+
+There is **no simulated fallback** here, unlike quotes. A labelled fake price still lets you
+exercise the console; a fake list of tradable instruments would assert that an account can trade
+something, which is a claim about entitlements rather than a number standing in for one. With no
+vendor connection the section is empty and says why.
+
+---
+
 ## Architecture
 
 ```
@@ -97,7 +137,7 @@ ai/           Read-only analyst toolkit, tool schemas, manual tool-use loop
 marketdata/   QuoteSource implementations, price history, scheduler
 corporate/    CorporateAction hierarchy, PriceBasis, PriceAdjuster
 account/      Webull accounts, balances, positions, environment model
-instrument/   Instrument registry and symbol→id mapping
+instrument/   Instrument registry, symbol→id mapping, tradable universe + catalog
 time/         Exchange calendar, session clock
 persistence/  JPA entity + repository for corporate actions
 ```
@@ -152,6 +192,13 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 - `getDividendCalendar(symbol, category)` — real cash dividends. Note the argument order; reversing
   it returns `417 UNSUPPORTED_CATEGORY` naming the *symbol* as the bad category.
 - `getQuote(depth=1)`, `getInstruments`, `getCompanyProfile`, and the whole v3 trade API.
+- `getInstrumentsV2` / `getCryptoInstrument` / `getFuturesProducts` / `getEventSeriesList` — the
+  four tradable universes. Two wrinkles: `getInstrumentsV2` ignores `pageSize`, returns a thousand
+  rows ordered by instrument id, and **the first page is entirely ETFs** — a single call yields an
+  equity universe containing no actual equities, so it has to be paged via `paginationKey`. And
+  there is no "list every event contract" endpoint: `getEventInstrumentsList` rejects a request
+  with no series symbol (`series_symbol is blank`), so the event universe is gathered series by
+  series, paced to stay under the rate limit.
 
 **Does not**
 - `getCorpAction` → `404 UnknownServerError`. Retired. Its `EventType` dictionary only ever covered
@@ -196,7 +243,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 91 tests
+mvn test        # 116 tests
 ```
 
 The ones worth reading:
@@ -212,6 +259,9 @@ The ones worth reading:
   reflection guard over the LLM's entire reachable surface.
 - [`MarketCalendarTest`](src/test/java/dev/aperture/time/MarketCalendarTest.java) — holidays derived
   from rules rather than a table that expires, including Good Friday and weekend observance.
+- [`TradableUniverseTest`](src/test/java/dev/aperture/instrument/TradableUniverseTest.java) — the
+  account-class mapping against every class the live account actually returns, plus the
+  fallback for classes that do not exist yet.
 
 ---
 
@@ -238,5 +288,9 @@ Stated plainly, because pretending otherwise would be the more serious flaw.
 - **The UI falls back to Production** when Sandbox has no credentials, rather than showing an empty
   panel. Read-only, and the environment badge and banner both turn red — but it is a deliberate
   choice worth knowing about.
+- **The equity universe is capped at 20,000 instruments** (20 pages). That covers the US listed
+  universe including preferreds, rights and units, but it is a prefix rather than a guarantee —
+  the cap exists so a vendor that keeps returning pagination keys cannot spin the load into an
+  unbounded fetch.
 - **In-memory price history.** Re-fetched from the vendor on startup; fine at watchlist scale,
   not at thousands of symbols.

@@ -126,6 +126,7 @@ select:disabled { color: var(--text-faint); }
   grid-template-areas:
     "watchlist chart"
     "watchlist account"
+    "universe  universe"
     "actions   analyst";
   gap: 12px;
   padding: 12px;
@@ -135,13 +136,14 @@ select:disabled { color: var(--text-faint); }
 .watchlist     { grid-area: watchlist; }
 .chart-panel   { grid-area: chart; }
 .account-panel { grid-area: account; }
+.universe-panel{ grid-area: universe; }
 .actions-panel { grid-area: actions; }
 .analyst-panel { grid-area: analyst; }
 
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "watchlist" "chart" "account" "actions" "analyst";
+    grid-template-areas: "watchlist" "chart" "account" "universe" "actions" "analyst";
   }
 }
 
@@ -257,3 +259,94 @@ select:disabled { color: var(--text-faint); }
 .answer-meta { font-size: 11px; color: var(--text-faint); margin-bottom: 8px; font-family: var(--mono); }
 .answer-body { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
 .answer-body.is-error { color: var(--down); }
+
+
+/* ── Tradable universe ─────────────────────────────────────────── */
+
+.universe-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+/* The asset class gets its own colour, so switching accounts is legible at a glance. */
+.universe-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.universe-badge[data-universe="FUTURES"] { background: rgba(232,179,57,.14); color: var(--warn); }
+.universe-badge[data-universe="CRYPTO"]  { background: rgba(38,194,129,.14); color: var(--up); }
+.universe-badge[data-universe="EVENT"]   { background: rgba(167,139,250,.16); color: #a78bfa; }
+
+.universe-for { font-size: 11px; color: var(--text-faint); }
+
+.universe-search {
+  margin-left: auto;
+  min-width: 210px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.universe-search:focus { outline: none; border-color: var(--accent); }
+
+.universe-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.universe-toggle input { accent-color: var(--accent); }
+
+.group-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  max-height: 72px;
+  overflow-y: auto;
+}
+.group-chips:empty { display: none; }
+
+.group-chip {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10.5px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.group-chip:hover { color: var(--text); border-color: var(--accent); }
+.group-chip.is-active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.group-chip .count { color: var(--text-faint); margin-left: 4px; }
+
+.universe-panel .table-scroll { max-height: 360px; }
+.universe-panel .grid td { font-size: 11.5px; }
+.universe-panel .grid tbody tr { cursor: default; }
+.universe-panel .grid .attr { color: var(--text-dim); font-family: var(--mono); text-align: right; }
+.universe-panel .grid .name { color: var(--text-dim); max-width: 340px; overflow: hidden;
+  text-overflow: ellipsis; }
+
+/* Halted / delisted rows stay visible but recede - hiding them makes a missing symbol look
+   like a bug rather than a closed market. */
+.universe-panel .grid tr.not-tradable td { opacity: .45; }
+.badge-halted { background: var(--bg-raised); color: var(--text-faint); }

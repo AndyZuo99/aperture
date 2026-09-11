@@ -130,6 +130,40 @@
     </div>
   </section>
 
+  <!-- ── Tradable universe ─────────────────────────────────────── -->
+  <!-- What the SELECTED account can actually trade. A futures account cannot buy equities, so
+       this section is driven by the account's class rather than by the watchlist. -->
+  <section class="panel universe-panel">
+    <div class="panel-head">
+      <h2>Tradable <span id="universeLabel">instruments</span></h2>
+      <span class="hint" id="universeHint"></span>
+    </div>
+
+    <div class="universe-bar">
+      <span class="universe-badge" id="universeBadge">—</span>
+      <span class="universe-for" id="universeFor"></span>
+      <input type="search" id="universeSearch" class="universe-search"
+             placeholder="Search symbol or name…" autocomplete="off">
+      <label class="universe-toggle">
+        <input type="checkbox" id="universeTradableOnly" checked>
+        <span>Tradable only</span>
+      </label>
+    </div>
+
+    <div class="group-chips" id="universeGroups"></div>
+
+    <p class="note" id="universeNote" hidden></p>
+
+    <div class="table-scroll">
+      <table class="grid" id="universeGrid">
+        <thead id="universeHead"></thead>
+        <tbody id="universeBody">
+          <tr class="empty"><td colspan="4">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- ── Corporate actions ─────────────────────────────────────── -->
   <section class="panel actions-panel">
     <div class="panel-head">

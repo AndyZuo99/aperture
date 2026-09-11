@@ -170,6 +170,45 @@ public final class ApiDtos {
             String defaultEnvironment) {
     }
 
+    /**
+     * The tradable universe for one account.
+     *
+     * <p>{@code columns} is derived from the rows rather than fixed, because the four universes
+     * describe themselves with entirely different attributes - a stock is marginable, a futures
+     * contract has a product class, an event contract has a settlement date. The UI renders
+     * whatever columns the data actually carries.
+     */
+    public record TradableUniverseView(
+            String universe,
+            String label,
+            String description,
+            String accountId,
+            String accountLabel,
+            String accountType,
+            String accountClass,
+            String environment,
+            boolean available,
+            String unavailableReason,
+            int matching,
+            int total,
+            boolean truncated,
+            List<String> columns,
+            List<TradableInstrumentView> instruments,
+            List<GroupCountView> groups) {
+    }
+
+    public record TradableInstrumentView(
+            String symbol,
+            String name,
+            String group,
+            String status,
+            boolean tradable,
+            Map<String, String> attributes) {
+    }
+
+    public record GroupCountView(String group, int count) {
+    }
+
     public record AskRequest(String question) {
     }
 
