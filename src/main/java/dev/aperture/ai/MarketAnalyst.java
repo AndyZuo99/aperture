@@ -402,7 +402,7 @@ public class MarketAnalyst {
         for (TradeRecommendation recommendation : planned) {
             committed = committed.plus(recommendation.economics().notional());
         }
-        if (committed.isGreaterThan(budget) && budget.isPositive()) {
+        if (budget.isPositive() && committed.isGreaterThan(budget)) {
             commentary = commentary + "\n\nNote: these recommendations commit "
                     + committed.toDisplay().toPlainString() + ", which exceeds the "
                     + budget.toDisplay().toPlainString() + " available.";
@@ -414,17 +414,39 @@ public class MarketAnalyst {
                 Duration.between(started, clock.now()), clock.now(), null);
     }
 
-    private Money resolveBudget(Optional<BrokerAccount> account, BigDecimal capital) {
+    /**
+     * How much the recommendations may commit.
+     *
+     * <p>Every fallback is checked for being <strong>positive</strong>, not merely present. A
+     * margin account carrying a debit reports a negative cash balance, and an account the vendor
+     * declines to quote buying power for reports none at all - so the obvious
+     * "buying power, else cash" chain can hand the model a negative budget, against which every
+     * proposal trivially "exceeds available capital". Real accounts look like this: one of the
+     * production accounts here has no reported buying power and cash of -2,358.
+     *
+     * <p>When nothing usable is found this returns zero rather than inventing a figure. The brief
+     * then says the capital is unknown, which is the honest input - guessing a round number would
+     * put a fabricated constraint in front of the model and size real orders against it.
+     */
+    // Package-private so the budget rules can be tested directly - the negative-cash case came
+    // from a real production account and is worth pinning.
+    Money resolveBudget(Optional<BrokerAccount> account, BigDecimal capital) {
         if (capital != null && capital.signum() > 0) {
             return Money.usd(capital);
         }
         return account.map(accounts::balance)
-                .flatMap(balance -> balance.buyingPower().or(balance::totalCash))
-                .orElse(Money.usd(BigDecimal.valueOf(10_000)));
+                .flatMap(balance -> balance.buyingPower().filter(Money::isPositive)
+                        .or(() -> balance.totalCash().filter(Money::isPositive)))
+                .orElse(Money.zero());
     }
 
     private String openingBrief(TradingEnvironment environment, Optional<BrokerAccount> account,
                                 TradableUniverse universe, Money budget) {
+        String capitalLine = budget.isPositive()
+                ? budget.toDisplay().toPlainString()
+                : "UNKNOWN - the broker reports no usable buying power for this account (a margin "
+                  + "debit or an unquoted figure). Do not size positions against a guess: say so "
+                  + "and recommend nothing until a capital figure is supplied.";
         return """
                 Recommend trades for this account.
 
@@ -439,7 +461,7 @@ public class MarketAnalyst {
                 account.map(BrokerAccount::displayName).orElse("(none selected)"),
                 environment.label(),
                 universe.label(),
-                budget.toDisplay().toPlainString(),
+                capitalLine,
                 clock.today());
     }
 

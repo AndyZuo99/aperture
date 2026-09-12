@@ -56,8 +56,19 @@ aperture:
 
     # Two independent conditions gate live order submission. See ApertureProperties.Webull.
     # Read-only production access - quotes, balances, positions - is NOT gated by these.
-    allow-live-trading: false
-    live-trading-confirmation: ""
+    #
+    # Both come from the environment and both default to OFF, so a checkout of this repository
+    # cannot place a real order no matter how it is run. Enabling live trading is a decision made
+    # on one machine, not a value committed to version control:
+    #
+    #   export APERTURE_ALLOW_LIVE_TRADING=true
+    #   export APERTURE_LIVE_TRADING_CONFIRMATION='I ACCEPT REAL MONEY ORDERS'
+    #
+    # The phrase is deliberately something a person types out. If it were settable by a boolean
+    # alone, the second condition would add nothing - the point is that no single flag, typo or
+    # copied config file can arm real-money trading on its own.
+    allow-live-trading: ${APERTURE_ALLOW_LIVE_TRADING:false}
+    live-trading-confirmation: ${APERTURE_LIVE_TRADING_CONFIRMATION:}
 
   market-data:
     watchlist:

@@ -244,6 +244,18 @@ Submitted to SANDBOX
 Sandbox submits freely; it is paper. Production requires **both** conditions on
 `ApertureProperties.Webull` — the boolean *and* the confirmation phrase — checked before a trading
 client is even acquired. The UI disables the button and shows why.
+
+Both come from the environment and both default to **off**, so a checkout of this repository
+cannot place a real order however it is run. Enabling live trading is a decision made on one
+machine, never a value committed to version control:
+
+```bash
+export APERTURE_ALLOW_LIVE_TRADING=true
+export APERTURE_LIVE_TRADING_CONFIRMATION='I ACCEPT REAL MONEY ORDERS'
+```
+
+The phrase is deliberately something a person types out. Setting only the boolean leaves
+submission blocked — which is the entire reason there are two conditions rather than one.
 [`OrderSubmissionGateTest`](src/test/java/dev/aperture/trading/OrderSubmissionGateTest.java)
 asserts each condition alone is insufficient, and that a refused submission never reaches for a
 client at all.
@@ -381,7 +393,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 140 tests
+mvn test        # 146 tests
 ```
 
 The ones worth reading:
