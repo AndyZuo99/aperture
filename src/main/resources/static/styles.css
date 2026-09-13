@@ -484,3 +484,11 @@ select:disabled { color: var(--text-faint); }
 
 /* A universe with no market data says so rather than showing an empty grid. */
 .grid tr.unquotable td { color: var(--warn); text-align: left; padding: 14px; line-height: 1.5; }
+
+
+/* Marks a charted security that is not in the grid - found through search rather than watched. */
+.off-watchlist {
+  font-size: 9.5px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px; margin-left: 7px;
+  background: var(--accent-soft); color: var(--accent); vertical-align: middle;
+}

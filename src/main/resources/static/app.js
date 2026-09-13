@@ -196,7 +196,13 @@ async function loadQuotes() {
   sortQuoteRows();
   $('quoteCount').textContent = `${quotes.length} instruments`;
 
-  if ((!state.selectedSymbol || !known.has(state.selectedSymbol)) && quotes.length) {
+  // Auto-select only when nothing has been chosen yet. Previously this also re-selected whenever
+  // the charted symbol was absent from the watchlist - which is exactly the case for anything
+  // found through search, so a searched security was dropped back to the first watchlist row on
+  // the next refresh a few seconds later. A deliberate choice outranks the default.
+  // applyUniverse() clears the selection when the account changes, which is what lets the new
+  // universe pick its own first row.
+  if (!state.selectedSymbol && quotes.length) {
     selectSymbol(quotes[0].symbol, universe);
   }
 }
@@ -229,6 +235,9 @@ function selectSymbol(symbol, universe, name) {
   const quote = state.quotes.get(symbol);
   $('chartSymbol').textContent = symbol;
   $('chartName').textContent = name || (quote ? quote.name : '');
+  // A searched security has no row in the grid, so say where it came from rather than leaving
+  // the chart looking like it lost its place in the watchlist.
+  $('chartOffWatchlist').hidden = state.quotes.has(symbol);
   loadHistory();
 }
 

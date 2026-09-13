@@ -233,6 +233,13 @@ The chart is no longer limited to the watchlist. A search box queries the select
 tradable universe — so an events account searching "bitcoin" gets Bitcoin *price-range contracts*,
 while a margin account gets Coca-Cola's listed shares — and any result can be charted.
 
+Whatever you select stays selected. The grid refreshes every fifteen seconds, and it used to
+re-select the first watchlist row whenever the charted symbol was not on it — which is precisely
+the case for anything found through search, so a searched security silently reverted a few seconds
+after you chose it. Auto-selection now only fills an empty slot; a deliberate choice outranks the
+default, and the chart marks an off-watchlist security as `searched` so it is clear where it came
+from. Switching accounts still clears the selection, because the new universe should pick its own.
+
 History resolves per universe: an equity already backfilled keeps its corporate-action adjustment,
 anything else is fetched on demand, and crypto and event series are raw by construction because
 they have no corporate actions to restate. The chart's return and volatility are computed from the
