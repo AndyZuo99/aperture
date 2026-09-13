@@ -52,7 +52,7 @@
   <!-- ── Watchlist ─────────────────────────────────────────────── -->
   <section class="panel watchlist">
     <div class="panel-head">
-      <h2>Watchlist</h2>
+      <h2>Watchlist <span class="sub" id="watchlistUniverse"></span></h2>
       <span class="hint" id="quoteCount"></span>
     </div>
     <div class="table-scroll">
@@ -81,6 +81,14 @@
   <section class="panel chart-panel">
     <div class="panel-head">
       <h2><span id="chartSymbol">—</span> <span class="sub" id="chartName"></span></h2>
+
+      <!-- Search the account's own tradable universe. The chart is not limited to the watchlist:
+           a symbol you can trade is a symbol you should be able to look at. -->
+      <div class="symbol-search">
+        <input type="search" id="symbolSearch" autocomplete="off" placeholder="Search securities…"
+               aria-label="Search securities to chart">
+        <div class="search-results" id="searchResults" hidden></div>
+      </div>
 
       <!-- The adjustment basis is a first-class control, not a setting buried somewhere.
            Which basis a series is on changes what the chart means. -->

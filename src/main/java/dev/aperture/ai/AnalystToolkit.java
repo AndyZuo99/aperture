@@ -381,7 +381,7 @@ public class AnalystToolkit {
         int horizon = horizonSessions > 0 ? horizonSessions : TrendAnalyzer.ONE_MONTH_SESSIONS;
 
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Instrument instrument : referenceData.tradable()) {
+        for (Instrument instrument : referenceData.equities()) {
             List<Bar> bars = priceHistory.bars(instrument.id(), AdjustmentPolicy.SPLITS_ONLY);
             if (bars.isEmpty()) {
                 continue;
@@ -444,6 +444,9 @@ public class AnalystToolkit {
                 .map(a -> TradableUniverse.forAccountClass(a.accountClass()))
                 .orElse(TradableUniverse.EQUITY);
 
+        // Blocking variant: a recommendation run lasts minutes, and reasoning about an empty
+        // universe because the catalog was still warming would be worse than waiting for it.
+        catalog.instrumentsNow(universe, java.time.Duration.ofSeconds(45));
         InstrumentCatalog.Listing listing = catalog.listing(
                 universe, query, "", true, limit > 0 ? Math.min(limit, 100) : 40);
 

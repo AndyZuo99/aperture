@@ -448,3 +448,39 @@ select:disabled { color: var(--text-faint); }
 .outcome { font-size: 10px; font-weight: 700; letter-spacing: .5px; padding: 2px 7px; border-radius: 3px; }
 .outcome-YES { background: var(--up-soft); color: var(--up); }
 .outcome-NO  { background: var(--down-soft); color: var(--down); }
+
+
+/* ── Symbol search ─────────────────────────────────────────────── */
+
+.symbol-search { position: relative; margin-left: auto; }
+.symbol-search input {
+  width: 180px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+  padding: 5px 9px; color: var(--text); font: inherit; font-size: 11.5px;
+}
+.symbol-search input:focus { outline: none; border-color: var(--accent); width: 230px; }
+
+/* Sits above the chart rather than pushing it down, so the layout does not jump while typing. */
+.search-results {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
+  width: 330px; max-height: 280px; overflow-y: auto;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+}
+.search-result {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 7px 10px; background: none; border: 0; border-bottom: 1px solid var(--border-soft);
+  color: var(--text); font: inherit; font-size: 11.5px; text-align: left; cursor: pointer;
+}
+.search-result:last-child { border-bottom: 0; }
+.search-result:hover, .search-result.is-active { background: var(--bg-hover); }
+.search-result .sym { font-weight: 600; font-family: var(--mono); flex: none; }
+.search-result .nm {
+  color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.search-empty { padding: 10px; color: var(--text-faint); font-size: 11.5px; }
+
+.panel-head h2 .sub { text-transform: none; letter-spacing: 0; font-weight: 400;
+  color: var(--text-faint); margin-left: 6px; }
+
+/* A universe with no market data says so rather than showing an empty grid. */
+.grid tr.unquotable td { color: var(--warn); text-align: left; padding: 14px; line-height: 1.5; }

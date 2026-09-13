@@ -13,6 +13,7 @@ import dev.aperture.instrument.TradableInstrument;
 import dev.aperture.instrument.TradableUniverse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -185,6 +186,171 @@ public class WebullInstrumentClient {
         } catch (RuntimeException e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Batch spot-crypto quotes.
+     *
+     * <p>A different endpoint from the equity one, returning the same {@code Snapshot} shape.
+     * Crypto trades continuously, so there is no extended-hours flag to pass.
+     */
+    public Map<String, dev.aperture.marketdata.Quote> cryptoQuotes(
+            java.util.Set<String> symbols, dev.aperture.time.MarketClock clock) {
+        Optional<DataClient> client = holder.dataClient();
+        if (client.isEmpty() || symbols.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            var snapshots = client.get().getCryptoSnapshots(
+                    upper(symbols), Category.US_CRYPTO.name());
+            if (snapshots == null) {
+                return Map.of();
+            }
+            Map<String, dev.aperture.marketdata.Quote> out = new java.util.LinkedHashMap<>();
+            java.time.Instant now = clock.now();
+            for (var snapshot : snapshots) {
+                if (snapshot.getSymbol() == null) {
+                    continue;
+                }
+                java.math.BigDecimal last = WebullQuoteClient.decimal(snapshot.getPrice());
+                if (last == null) {
+                    last = WebullQuoteClient.decimal(snapshot.getClose());
+                }
+                if (last == null || last.signum() <= 0) {
+                    continue;
+                }
+                java.math.BigDecimal previousClose = WebullQuoteClient.decimal(
+                        snapshot.getPreClose());
+                out.put(snapshot.getSymbol().toUpperCase(), new dev.aperture.marketdata.Quote(
+                        dev.aperture.instrument.InstrumentId.of(snapshot.getSymbol().toUpperCase()),
+                        dev.aperture.common.Price.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getBid()))),
+                        dev.aperture.common.Quantity.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getBidSize()))),
+                        dev.aperture.common.Price.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getAsk()))),
+                        dev.aperture.common.Quantity.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getAskSize()))),
+                        dev.aperture.common.Price.of(last),
+                        dev.aperture.common.Quantity.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getVolume()))),
+                        dev.aperture.common.Price.of(previousClose == null ? last : previousClose),
+                        clock.currentSession(),
+                        dev.aperture.marketdata.QuoteProvenance.LIVE_REST,
+                        snapshot.getLastTradeTime() == null
+                                ? now : java.time.Instant.ofEpochMilli(snapshot.getLastTradeTime()),
+                        now));
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.debug("Crypto snapshots failed for {} symbols: {}", symbols.size(), e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /**
+     * Batch event-contract quotes, shown from the YES side.
+     *
+     * <p>YES is the conventional reading of a binary market - a YES price of 0.02 says the market
+     * puts the outcome at about 2%. The NO side is simply its complement, and
+     * {@link #eventQuote} serves whichever side a trade actually needs.
+     */
+    public Map<String, dev.aperture.marketdata.Quote> eventQuotes(
+            java.util.Set<String> symbols, dev.aperture.time.MarketClock clock) {
+        Optional<DataClient> client = holder.dataClient();
+        if (client.isEmpty() || symbols.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            var snapshots = client.get().getEventSnapshot(
+                    upper(symbols), Category.US_EVENT.name());
+            if (snapshots == null) {
+                return Map.of();
+            }
+            Map<String, dev.aperture.marketdata.Quote> out = new java.util.LinkedHashMap<>();
+            java.time.Instant now = clock.now();
+            for (var snapshot : snapshots) {
+                if (snapshot.getSymbol() == null) {
+                    continue;
+                }
+                java.math.BigDecimal last = WebullQuoteClient.decimal(snapshot.getPrice());
+                if (last == null || last.signum() <= 0) {
+                    continue;
+                }
+                out.put(snapshot.getSymbol().toUpperCase(), new dev.aperture.marketdata.Quote(
+                        dev.aperture.instrument.InstrumentId.of(snapshot.getSymbol().toUpperCase()),
+                        dev.aperture.common.Price.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getYesBid()))),
+                        dev.aperture.common.Quantity.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getYesBidSize()))),
+                        dev.aperture.common.Price.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getYesAsk()))),
+                        dev.aperture.common.Quantity.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getYesAskSize()))),
+                        dev.aperture.common.Price.of(last),
+                        dev.aperture.common.Quantity.of(orZero(
+                                WebullQuoteClient.decimal(snapshot.getVolume()))),
+                        dev.aperture.common.Price.of(last),
+                        clock.currentSession(),
+                        dev.aperture.marketdata.QuoteProvenance.LIVE_REST,
+                        snapshot.getLastTradeTime() == null
+                                ? now : java.time.Instant.ofEpochMilli(snapshot.getLastTradeTime()),
+                        now));
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.debug("Event snapshots failed for {} symbols: {}", symbols.size(), e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /**
+     * The nearest still-tradable market in each event series.
+     *
+     * <p>Series are the stable identifier; the markets inside them are dated and settle. Resolving
+     * at runtime is what stops the event watchlist quietly emptying as its contracts expire.
+     */
+    public Map<String, EventMarket> nearestMarketPerSeries(List<String> seriesSymbols) {
+        Optional<DataClient> client = holder.dataClient();
+        if (client.isEmpty() || seriesSymbols.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, EventMarket> out = new java.util.LinkedHashMap<>();
+        for (String series : seriesSymbols) {
+            if (series == null || series.isBlank()) {
+                continue;
+            }
+            try {
+                EventInstrumentParam param = new EventInstrumentParam();
+                param.setSeriesSymbol(series.trim().toUpperCase());
+                param.setPageSize(50);
+                List<EventMarket> markets = client.get().getEventInstrumentsList(param);
+                if (markets == null) {
+                    continue;
+                }
+                markets.stream()
+                        .filter(m -> m.getSymbol() != null)
+                        .filter(m -> STATUS_OPEN.equals(m.getTradableStatus()))
+                        // Soonest to settle: the market with the most immediate relevance, and
+                        // the one most likely to be actively quoted.
+                        .min(java.util.Comparator.comparing(
+                                m -> m.getLastTradingDate() == null ? "9999" : m.getLastTradingDate()))
+                        .ifPresent(m -> out.put(series.trim().toUpperCase(), m));
+                Thread.sleep(EVENT_CALL_SPACING_MS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (RuntimeException e) {
+                log.debug("Event series {} unavailable: {}", series, e.getMessage());
+            }
+        }
+        return out;
+    }
+
+    private static java.util.Set<String> upper(java.util.Set<String> symbols) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        symbols.forEach(symbol -> out.add(symbol.toUpperCase()));
+        return out;
     }
 
     /**

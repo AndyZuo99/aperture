@@ -121,8 +121,9 @@ class RecommendationBudgetTest {
         return new ApertureProperties(
                 new ApertureProperties.Webull("k", "s", "", "", "us", true, "SANDBOX",
                         false, "", Duration.ofMinutes(6)),
-                new ApertureProperties.MarketData(List.of(), List.of(), Duration.ofSeconds(2),
-                        Duration.ofSeconds(15), 250, false, Duration.ofMinutes(5)),
+                new ApertureProperties.MarketData(List.of(), List.of(), List.of(), List.of(),
+                        List.of(), Duration.ofSeconds(2), Duration.ofSeconds(15), 250, false,
+                        Duration.ofMinutes(5)),
                 new ApertureProperties.Analyst(false, "m", "", 8, 16000));
     }
 }

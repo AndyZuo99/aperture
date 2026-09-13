@@ -329,7 +329,9 @@ public class WebullStreamingQuoteSource implements QuoteSource {
         Set<String> symbols = new LinkedHashSet<>();
         // Only the watchlist is subscribed. Candidates exist for historical scanning and
         // would otherwise turn a 10-symbol subscription into a few hundred.
-        for (Instrument instrument : referenceData.watchlist()) {
+        // Streaming is an equity feed. Crypto and event watchlists are polled instead.
+        for (Instrument instrument : referenceData.watchlist(
+                dev.aperture.instrument.TradableUniverse.EQUITY)) {
             symbols.add(instrument.primarySymbol());
             bySymbol.put(instrument.primarySymbol(), instrument.id());
         }

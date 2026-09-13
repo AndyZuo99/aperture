@@ -119,6 +119,32 @@ public record ApertureProperties(
              * rather than a few hundred streaming subscriptions.
              */
             @DefaultValue({}) List<String> candidateUniverse,
+
+            /*
+             * Per-universe watchlists. What you watch has to follow what the account can trade:
+             * a futures account has no use for a grid of equities it cannot buy.
+             */
+            @DefaultValue({"BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "LTCUSD",
+                    "AVAXUSD", "LINKUSD"})
+            List<String> cryptoWatchlist,
+
+            /*
+             * Event SERIES, not contract symbols. An individual market is dated -
+             * KXFEDDECISION-26SEP-H26 - and stops existing after it settles, so a hardcoded list
+             * of them silently empties within weeks. The series is the stable identifier; the
+             * nearest live market in each is resolved at runtime.
+             */
+            @DefaultValue({"KXFEDDECISION", "KXCPIYOY", "KXPAYROLLS", "KXU3", "KXAAAGASM",
+                    "INXI", "KXETHD"})
+            List<String> eventSeriesWatchlist,
+
+            /*
+             * Listed for completeness. Futures market data is a separate Webull entitlement, so
+             * these carry no quote - the grid says so rather than showing blanks.
+             */
+            @DefaultValue({"ESZ6", "NQZ6", "CLX6", "GCZ6"})
+            List<String> futuresWatchlist,
+
             @DefaultValue("2s") Duration pollInterval,
             @DefaultValue("15s") Duration staleAfter,
             @DefaultValue("250") int historyDays,
@@ -134,6 +160,16 @@ public record ApertureProperties(
          */
         public boolean isStale(java.time.Instant receivedAt, java.time.Instant now) {
             return receivedAt.plus(staleAfter).isBefore(now);
+        }
+
+        /** The configured watchlist for a universe. Events resolve from series separately. */
+        public List<String> watchlistFor(dev.aperture.instrument.TradableUniverse universe) {
+            return switch (universe) {
+                case EQUITY -> watchlist;
+                case CRYPTO -> cryptoWatchlist;
+                case FUTURES -> futuresWatchlist;
+                case EVENT -> eventSeriesWatchlist;
+            };
         }
     }
 

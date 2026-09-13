@@ -101,6 +101,24 @@ public class ReferenceDataService {
         return all().stream().filter(Instrument::isTradable).toList();
     }
 
+    /**
+     * Tradable instruments in one universe.
+     *
+     * <p>The equity backfill and the candidate scan both use this: issuing
+     * {@code getBatchBars} for a crypto pair is not merely wasteful, it fails every cycle and the
+     * instrument is never marked complete, so the scheduler retries it forever.
+     */
+    public List<Instrument> tradable(TradableUniverse universe) {
+        return tradable().stream()
+                .filter(instrument -> instrument.type().universe() == universe)
+                .toList();
+    }
+
+    /** Listed equities and funds - the only instruments the equity bar endpoints accept. */
+    public List<Instrument> equities() {
+        return tradable(TradableUniverse.EQUITY);
+    }
+
     /** Only the instruments to quote, stream and chart. */
     public List<Instrument> watchlist() {
         return all().stream()
@@ -109,8 +127,25 @@ public class ReferenceDataService {
                 .toList();
     }
 
+    /** The watched instruments of one universe - what that account's grid shows. */
+    public List<Instrument> watchlist(TradableUniverse universe) {
+        return watchlist().stream()
+                .filter(instrument -> instrument.type().universe() == universe)
+                .toList();
+    }
+
     public boolean isWatched(InstrumentId id) {
         return watched.contains(id);
+    }
+
+    /**
+     * Stops watching an instrument without forgetting it.
+     *
+     * <p>Used when an event contract settles and its series rolls to the next one: the old market
+     * should leave the grid, but anything already referring to it must still resolve.
+     */
+    public void unwatch(InstrumentId id) {
+        watched.remove(id);
     }
 
     public int candidateCount() {

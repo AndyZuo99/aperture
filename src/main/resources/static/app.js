@@ -31,6 +31,9 @@ const state = {
   // the slower events response that was already in flight.
   universeRequest: 0,
   historyRequest: 0,
+  quotesRequest: 0,
+  searchRequest: 0,
+  chartUniverse: 'EQUITY',   // the universe the charted symbol belongs to
 };
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -113,6 +116,11 @@ async function refreshStatus() {
 /* ── watchlist ───────────────────────────────────────────────────── */
 
 function renderQuoteRow(quote) {
+  // Every universe's quotes arrive on one WebSocket channel, so a push for an instrument this
+  // account cannot trade must be dropped rather than appended to the grid.
+  const current = state.universe || 'EQUITY';
+  if (quote.universe && quote.universe !== current) return;
+
   const previous = state.quotes.get(quote.symbol);
   state.quotes.set(quote.symbol, quote);
 
@@ -120,7 +128,7 @@ function renderQuoteRow(quote) {
   if (!row) {
     row = document.createElement('tr');
     row.dataset.symbol = quote.symbol;
-    row.addEventListener('click', () => selectSymbol(quote.symbol));
+    row.addEventListener('click', () => selectSymbol(quote.symbol, state.universe, quote.name));
     $('quoteBody').appendChild(row);
   }
 
@@ -155,17 +163,42 @@ function sortQuoteRows() {
 }
 
 async function loadQuotes() {
-  const quotes = await getJson('/api/market/quotes');
-  if (!quotes || !quotes.length) return;
+  const universe = state.universe || 'EQUITY';
+  const requestId = ++state.quotesRequest;
+  const quotes = await getJson(`/api/market/quotes?universe=${universe}`);
+  if (requestId !== state.quotesRequest) return;
 
-  const placeholder = $('quoteBody').querySelector('tr.empty');
-  if (placeholder) placeholder.remove();
+  // Futures have no market data on this entitlement. Say so rather than leaving a blank grid,
+  // which reads as a broken feed.
+  if (!quotes || !quotes.length) {
+    const availability = await getJson(`/api/market/quotes/availability?universe=${universe}`);
+    if (requestId !== state.quotesRequest) return;
+    if (availability && !availability.quotable) {
+      $('quoteBody').innerHTML =
+        `<tr class="unquotable"><td colspan="9">${availability.reason}</td></tr>`;
+      $('quoteCount').textContent = '';
+      state.quotes.clear();
+    }
+    return;
+  }
+
+  // Rebuild rather than merge: switching universe replaces the instrument set entirely, and
+  // merging would leave the previous account's symbols sitting in the grid.
+  const known = new Set(quotes.map((q) => q.symbol));
+  $('quoteBody').querySelectorAll('tr').forEach((row) => {
+    if (!row.dataset.symbol || !known.has(row.dataset.symbol)) row.remove();
+  });
+  [...state.quotes.keys()].forEach((symbol) => {
+    if (!known.has(symbol)) state.quotes.delete(symbol);
+  });
 
   quotes.forEach(renderQuoteRow);
   sortQuoteRows();
   $('quoteCount').textContent = `${quotes.length} instruments`;
 
-  if (!state.selectedSymbol && quotes.length) selectSymbol(quotes[0].symbol);
+  if ((!state.selectedSymbol || !known.has(state.selectedSymbol)) && quotes.length) {
+    selectSymbol(quotes[0].symbol, universe);
+  }
 }
 
 /* ── live quote stream ───────────────────────────────────────────── */
@@ -187,14 +220,15 @@ function openQuoteStream() {
 
 /* ── chart ───────────────────────────────────────────────────────── */
 
-function selectSymbol(symbol) {
+function selectSymbol(symbol, universe, name) {
   state.selectedSymbol = symbol;
+  state.chartUniverse = universe || state.universe || 'EQUITY';
   document.querySelectorAll('tr[data-symbol]').forEach((row) =>
     row.classList.toggle('is-selected', row.dataset.symbol === symbol));
 
   const quote = state.quotes.get(symbol);
   $('chartSymbol').textContent = symbol;
-  $('chartName').textContent = quote ? quote.name : '';
+  $('chartName').textContent = name || (quote ? quote.name : '');
   loadHistory();
 }
 
@@ -203,12 +237,16 @@ async function loadHistory() {
   const requestId = ++state.historyRequest;
   try {
     const history = await getJson(
-      `/api/market/history/${state.selectedSymbol}?policy=${state.policy}&days=250`);
+      `/api/market/history/${encodeURIComponent(state.selectedSymbol)}` +
+      `?policy=${state.policy}&days=250&universe=${state.chartUniverse}`);
     if (requestId !== state.historyRequest) return;
     state.history = history;
 
     if (!history || !history.bars.length) {
       $('chartEmpty').hidden = false;
+      $('chartEmpty').textContent = state.chartUniverse === 'FUTURES'
+        ? 'Futures market data is a separate Webull entitlement, so this contract cannot be charted.'
+        : `No daily history available for ${state.selectedSymbol}.`;
       $('chartCanvas').hidden = true;
       $('chartReturn').textContent = '—';
       $('chartVol').textContent = '—';
@@ -338,6 +376,59 @@ function drawChart(history) {
   ctx.stroke();
 }
 
+/* ── symbol search ───────────────────────────────────────────────── */
+
+/*
+ * Searches the selected account's own tradable universe, so the results are always things this
+ * account could actually buy. Charting is not restricted to the watchlist: a security you can
+ * trade is one you should be able to look at.
+ */
+async function searchSymbols(query) {
+  const results = $('searchResults');
+  if (!query || query.trim().length < 1) {
+    results.hidden = true;
+    return;
+  }
+  const requestId = ++state.searchRequest;
+  const params = new URLSearchParams({
+    environment: state.environment,
+    q: query.trim(),
+    limit: '10',
+    tradableOnly: 'true',
+  });
+  if (state.accountId) params.set('accountId', state.accountId);
+
+  try {
+    const data = await getJson('/api/instruments/tradable?' + params.toString());
+    if (requestId !== state.searchRequest) return;
+    if (!data || !data.instruments.length) {
+      // "Still loading" and "nothing matches" look identical to a user unless you say which.
+      results.innerHTML = data && data.loading
+        ? '<div class="search-empty">Loading this account\'s instruments…</div>'
+        : `<div class="search-empty">No ${
+            (data && data.label ? data.label : 'instruments').toLowerCase()} match “${query}”.</div>`;
+      results.hidden = false;
+      return;
+    }
+    results.innerHTML = data.instruments.map((i) => `
+      <button type="button" class="search-result" data-symbol="${escapeAttr(i.symbol)}"
+              data-name="${escapeAttr(i.name)}" data-universe="${data.universe}">
+        <span class="sym">${i.symbol}</span>
+        <span class="nm">${i.name}</span>
+      </button>`).join('');
+    results.querySelectorAll('.search-result').forEach((button) =>
+      button.addEventListener('click', () => {
+        selectSymbol(button.dataset.symbol, button.dataset.universe, button.dataset.name);
+        results.hidden = true;
+        $('symbolSearch').value = '';
+      }));
+    results.hidden = false;
+  } catch (e) {
+    results.innerHTML = '<div class="search-empty">Search failed.</div>';
+    results.hidden = false;
+  }
+}
+
 /* ── accounts ────────────────────────────────────────────────────── */
 
 async function loadEnvironments() {
@@ -396,7 +487,26 @@ function applyEnvironment() {
   loadAccountDetail();
   // The account class decides the universe, so a change of account changes the instrument set.
   state.universeGroup = '';
+  applyUniverse(env.accounts[0]);
   loadUniverse();
+}
+
+/*
+ * Switches the grid, chart and prompts to an account's universe straight away.
+ *
+ * <p>Driven by the account rather than by the instrument catalog: the catalog has to enumerate
+ * thousands of contracts and takes seconds, and making the UI wait on it means selecting an
+ * events account shows equities for as long as that takes.
+ */
+function applyUniverse(account) {
+  if (!account || !account.universe || account.universe === state.universe) return;
+  state.universe = account.universe;
+  renderAskSuggestions(account.universe);
+  $('watchlistUniverse').textContent = account.universeLabel || '';
+  $('quoteBody').innerHTML = '<tr class="empty"><td colspan="9">Loading…</td></tr>';
+  state.quotes.clear();
+  state.selectedSymbol = null;
+  loadQuotes();
 }
 
 async function loadAccountDetail() {
@@ -470,7 +580,7 @@ async function loadActions() {
     </tr>`).join('');
 
   body.querySelectorAll('tr[data-symbol-action]').forEach((row) =>
-    row.addEventListener('click', () => selectSymbol(row.dataset.symbolAction)));
+    row.addEventListener('click', () => selectSymbol(row.dataset.symbolAction, 'EQUITY')));
 
   $('actionHint').textContent = `${actions.length} recorded`;
 }
@@ -540,6 +650,10 @@ async function loadUniverse() {
     // A newer request has been issued since this one left; its answer is the current truth.
     if (requestId !== state.universeRequest) return;
     if (data) renderUniverse(data);
+    // A cold universe is fetched in the background; check back rather than leaving "Loading…".
+    if (data && data.loading) {
+      setTimeout(() => { if (requestId === state.universeRequest) loadUniverse(); }, 4000);
+    }
   } catch (e) {
     if (requestId === state.universeRequest) {
       $('universeHint').textContent = 'Could not load instruments';
@@ -548,9 +662,9 @@ async function loadUniverse() {
 }
 
 function renderUniverse(data) {
-  const changed = state.universe !== data.universe;
+  // The universe itself comes from the account (see applyUniverse); this panel only renders the
+  // instrument listing, which is far slower to fetch.
   state.universe = data.universe;
-  if (changed) renderAskSuggestions(data.universe);
 
   $('universeLabel').textContent = data.label.toLowerCase();
   const badge = $('universeBadge');
@@ -563,8 +677,8 @@ function renderUniverse(data) {
     : '';
 
   const note = $('universeNote');
-  note.hidden = data.available;
-  if (!data.available) note.textContent = data.unavailableReason;
+  note.hidden = data.available || data.loading;
+  if (!data.available && !data.loading) note.textContent = data.unavailableReason;
 
   $('universeHint').textContent = data.available
     ? `${data.matching.toLocaleString()} of ${data.total.toLocaleString()}` +
@@ -585,13 +699,15 @@ function renderUniverse(data) {
 
   const body = $('universeBody');
   if (!data.instruments.length) {
-    const reason = data.available ? 'No instruments match.' : 'Unavailable.';
+    const reason = data.loading ? 'Loading…'
+      : data.available ? 'No instruments match.' : 'Unavailable.';
     body.innerHTML = `<tr class="empty"><td colspan="${3 + data.columns.length}">${reason}</td></tr>`;
     return;
   }
 
   body.innerHTML = data.instruments.map((i) => `
-    <tr class="${i.tradable ? '' : 'not-tradable'}">
+    <tr class="${i.tradable ? '' : 'not-tradable'}" data-chart="${escapeAttr(i.symbol)}"
+        data-chart-name="${escapeAttr(i.name)}">
       <td class="sym">${i.symbol}${i.tradable ? '' : ' <span class="badge badge-halted">halted</span>'}</td>
       <td class="name" title="${escapeAttr(i.name)}">${i.name}</td>
       <td class="flat">${i.group}</td>
@@ -911,6 +1027,9 @@ function wireEvents() {
   $('accountSelect').addEventListener('change', (event) => {
     state.accountId = event.target.value;
     state.universeGroup = '';
+    const env = state.environments.find((e) => e.environment === state.environment);
+    const account = env && env.accounts.find((a) => a.accountId === state.accountId);
+    applyUniverse(account);
     loadAccountDetail();
     loadUniverse();
   });
@@ -925,6 +1044,23 @@ function wireEvents() {
       state.universeQuery = value;
       loadUniverse();
     }, 250);
+  });
+
+  let symbolSearchTimer;
+  $('symbolSearch').addEventListener('input', (event) => {
+    clearTimeout(symbolSearchTimer);
+    const value = event.target.value;
+    symbolSearchTimer = setTimeout(() => searchSymbols(value), 220);
+  });
+  $('symbolSearch').addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      $('searchResults').hidden = true;
+      event.target.value = '';
+    }
+  });
+  // Dismiss the dropdown on an outside click, the way a search box is expected to behave.
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.symbol-search')) $('searchResults').hidden = true;
   });
 
   $('universeTradableOnly').addEventListener('change', (event) => {

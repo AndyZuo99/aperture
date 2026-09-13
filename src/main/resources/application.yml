@@ -26,6 +26,16 @@ spring:
     enabled: true
     baseline-on-migrate: true
 
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          # Always revalidate the frontend. Served from inside the jar, these have no reliable
+          # Last-Modified, so a browser will happily keep a stale app.js after a rebuild and run
+          # the old UI against the new API - which produces confusing, wrong behaviour that looks
+          # like a server bug.
+          no-cache: true
+
   jackson:
     default-property-inclusion: non_null
     serialization:

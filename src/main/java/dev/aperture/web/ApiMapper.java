@@ -56,7 +56,9 @@ public class ApiMapper {
                 quote.provenance().label(),
                 quote.isLive(),
                 Math.max(0, quote.age(now).toSeconds()),
-                quote.eventTime().toString());
+                quote.eventTime().toString(),
+                (instrument == null ? dev.aperture.instrument.TradableUniverse.EQUITY
+                        : instrument.type().universe()).name());
     }
 
     public ApiDtos.BarView toBarView(Bar bar) {
@@ -106,7 +108,11 @@ public class ApiMapper {
                 account.accountType(),
                 account.accountClass(),
                 account.environment().name(),
-                account.isReal());
+                account.isReal(),
+                dev.aperture.instrument.TradableUniverse
+                        .forAccountClass(account.accountClass()).name(),
+                dev.aperture.instrument.TradableUniverse
+                        .forAccountClass(account.accountClass()).label());
     }
 
     public ApiDtos.AccountDetailView toAccountDetailView(BrokerAccount account,

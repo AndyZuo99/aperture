@@ -39,6 +39,7 @@ public class MarketDataScheduler {
     private final PriceHistory priceHistory;
     private final CorporateActionService corporateActions;
     private final MarketClock clock;
+    private final WatchlistService watchlists;
     private final ApertureProperties.MarketData config;
 
     /** Instruments whose history has been loaded, and the session it was loaded for. */
@@ -53,6 +54,7 @@ public class MarketDataScheduler {
                                PriceHistory priceHistory,
                                CorporateActionService corporateActions,
                                MarketClock clock,
+                               WatchlistService watchlists,
                                ApertureProperties properties) {
         this.marketData = marketData;
         this.rest = rest;
@@ -62,6 +64,7 @@ public class MarketDataScheduler {
         this.priceHistory = priceHistory;
         this.corporateActions = corporateActions;
         this.clock = clock;
+        this.watchlists = watchlists;
         this.config = properties.marketData();
     }
 
@@ -100,7 +103,9 @@ public class MarketDataScheduler {
             return;
         }
         LocalDate session = clock.currentTradingDate();
-        List<Instrument> pending = referenceData.tradable().stream()
+        // Equities only: the batch-bar endpoint is an equity endpoint, and asking it for a
+        // crypto pair fails every cycle without ever marking that symbol complete.
+        List<Instrument> pending = referenceData.equities().stream()
                 .filter(i -> !session.equals(backfilled.get(i.primarySymbol())))
                 .toList();
         if (pending.isEmpty()) {
@@ -158,6 +163,21 @@ public class MarketDataScheduler {
         }
         if (added > 0) {
             log.info("Recorded {} dividend(s) from the vendor calendar", added);
+        }
+    }
+
+    /**
+     * Re-resolves each event series to its nearest live market.
+     *
+     * <p>Event contracts settle and roll, so a watchlist pinned to specific symbols empties
+     * itself. The service rate-limits the actual work; this just gives it a chance to run.
+     */
+    @Scheduled(fixedDelay = 15 * 60 * 1000L, initialDelay = 25_000)
+    public void refreshEventWatchlist() {
+        try {
+            watchlists.refreshEventWatchlist();
+        } catch (RuntimeException e) {
+            log.debug("Event watchlist refresh failed: {}", e.getMessage());
         }
     }
 

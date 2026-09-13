@@ -180,8 +180,9 @@ class OrderSubmissionGateTest {
     private OrderSubmissionService serviceWith(ApertureProperties.Webull webull) {
         ApertureProperties properties = new ApertureProperties(
                 webull,
-                new ApertureProperties.MarketData(List.of(), List.of(), Duration.ofSeconds(2),
-                        Duration.ofSeconds(15), 250, false, Duration.ofMinutes(5)),
+                new ApertureProperties.MarketData(List.of(), List.of(), List.of(), List.of(),
+                        List.of(), Duration.ofSeconds(2), Duration.ofSeconds(15), 250, false,
+                        Duration.ofMinutes(5)),
                 new ApertureProperties.Analyst(false, "m", "", 8, 16000));
         return new OrderSubmissionService(holder, accounts, clock, properties);
     }

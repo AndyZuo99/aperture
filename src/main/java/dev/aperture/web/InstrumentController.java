@@ -92,6 +92,7 @@ public class InstrumentController {
                 target.name(),
                 listing.isAvailable(),
                 listing.unavailableReason(),
+                listing.loading(),
                 listing.matching(),
                 listing.total(),
                 listing.truncated(),

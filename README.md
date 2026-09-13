@@ -14,7 +14,7 @@ Java 21 · Spring Boot 3.5 · H2 + Flyway · Anthropic Java SDK · dependency-fr
 | **Live market data** | Streaming Level 1 over Webull's MQTT feed, with batch REST snapshots as the polling path and a local simulator as the fallback. Every quote is labelled with where it came from. |
 | **Corporate actions** | Splits and cash dividends, with a back-adjustment engine that restates history so a return spanning an ex-date is a real return. Three bases — unadjusted, split-adjusted, total return — selectable per chart. |
 | **Accounts** | The account holder's real Webull accounts across Production and Sandbox, with balances and positions as the broker reports them. |
-| **Tradable universe** | The securities the *selected account* can actually trade, driven by its account class: event contracts, futures, crypto or equities. |
+| **Tradable universe** | The securities the *selected account* can actually trade, driven by its account class: event contracts, futures, crypto or equities. The watchlist, the chart and the search all follow it. |
 | **LLM analyst** | Claude with a read-only toolkit over the live services. Answers questions — with prompts tailored to what the selected account can trade — and **recommends trades** as a market entry plus a resting GTC exit. It cannot place them, structurally. |
 | **Order submission** | A human can send a recommendation's two legs to the broker. Sandbox freely; production behind a two-condition gate. |
 
@@ -196,6 +196,48 @@ flattering one would be worse than useless.
 
 It also flags simulated pricing, thin historical samples, and weak hit rates. The entry is the
 **ask**, not the last print, because a market buy lifts the offer.
+
+### The watchlist and chart follow the account
+
+The grid is not a fixed list of stocks. Each universe has its own watchlist, quoted from its own
+endpoint, because a futures account has no use for a column of equities it cannot buy:
+
+| Universe | Watchlist | Quote source |
+|---|---|---|
+| Equities | 10 large caps | MQTT stream + `getSnapshots` |
+| Crypto | 8 major pairs | `getCryptoSnapshots` |
+| Event contracts | resolved from series | `getEventSnapshot`, YES side |
+| Futures | 4 contracts | **none** — stated, not left blank |
+
+**Events are configured as series, not symbols.** An individual market is dated —
+`KXFEDDECISION-26SEP-H26` — and stops existing once it settles, so a hardcoded list empties itself
+within weeks and the grid quietly goes blank. The series is the stable identifier; the nearest
+still-tradable market in each is resolved at runtime and re-resolved as contracts roll.
+
+Two things that took care:
+
+**The universe comes from the account, not from the catalog.** Enumerating the event universe walks
+every series and takes the better part of a minute; making the UI wait on that meant selecting an
+events account showed equities for as long as it took. The account's *class* answers the question
+instantly, so `AccountView` carries the universe and the grid switches immediately while the
+catalog loads behind it.
+
+**Nothing blocks a request thread on a vendor walk.** `InstrumentCatalog` refreshes on a background
+thread and callers get whatever is cached plus a `loading` flag — empty means "not yet", which the
+UI says rather than showing "no matches". The analyst, which already runs for minutes, uses a
+blocking variant instead; reasoning about an empty universe would be worse than waiting.
+
+### Searching, and charting anything
+
+The chart is no longer limited to the watchlist. A search box queries the selected account's own
+tradable universe — so an events account searching "bitcoin" gets Bitcoin *price-range contracts*,
+while a margin account gets Coca-Cola's listed shares — and any result can be charted.
+
+History resolves per universe: an equity already backfilled keeps its corporate-action adjustment,
+anything else is fetched on demand, and crypto and event series are raw by construction because
+they have no corporate actions to restate. The chart's return and volatility are computed from the
+bars actually displayed rather than from stored history, which is what makes them appear for a
+searched symbol at all. Futures charts refuse, for the same entitlement reason as everything else.
 
 ### Event contracts trade as two instruments
 
@@ -413,7 +455,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 149 tests
+mvn test        # 171 tests
 ```
 
 The ones worth reading:
@@ -432,6 +474,10 @@ The ones worth reading:
 - [`TradableUniverseTest`](src/test/java/dev/aperture/instrument/TradableUniverseTest.java) — the
   account-class mapping against every class the live account actually returns, plus the
   fallback for classes that do not exist yet.
+- [`SecurityTypeUniverseTest`](src/test/java/dev/aperture/instrument/SecurityTypeUniverseTest.java) —
+  that no non-equity type is ever treated as equity-like. The equity bar endpoint asked for a
+  crypto pair fails every scheduled run, and the symbol is never marked complete, so it retries
+  forever.
 - [`TrendAnalyzerTest`](src/test/java/dev/aperture/analysis/TrendAnalyzerTest.java) — pins down
   what a "hit rate" counts: a series that closes flat every day but whose highs reach the target
   is a 100% hit rate, not 0%. Also the horizon boundary, cut deliberately on both sides.

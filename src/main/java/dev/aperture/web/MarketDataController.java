@@ -38,28 +38,53 @@ public class MarketDataController {
     private final CorporateActionService corporateActions;
     private final ApiMapper mapper;
     private final MarketClock clock;
+    private final dev.aperture.analysis.HistoryProvider historyProvider;
+    private final dev.aperture.marketdata.WatchlistService watchlists;
 
     public MarketDataController(MarketDataService marketData,
                                 PriceHistory priceHistory,
                                 ReferenceDataService referenceData,
                                 CorporateActionService corporateActions,
                                 ApiMapper mapper,
-                                MarketClock clock) {
+                                MarketClock clock,
+                                dev.aperture.analysis.HistoryProvider historyProvider,
+                                dev.aperture.marketdata.WatchlistService watchlists) {
         this.marketData = marketData;
         this.priceHistory = priceHistory;
         this.referenceData = referenceData;
         this.corporateActions = corporateActions;
         this.mapper = mapper;
         this.clock = clock;
+        this.historyProvider = historyProvider;
+        this.watchlists = watchlists;
     }
 
-    /** Every watched instrument's current quote. */
+    /**
+     * The watchlist for a universe, or every watched instrument when none is named.
+     *
+     * <p>The grid follows the selected account: a futures account has no use for a list of
+     * equities it cannot buy.
+     */
     @GetMapping("/quotes")
-    public List<ApiDtos.QuoteView> quotes() {
+    public List<ApiDtos.QuoteView> quotes(@RequestParam(required = false) String universe) {
         Instant now = clock.now();
         List<ApiDtos.QuoteView> views = new ArrayList<>();
-        marketData.allQuotes().values().forEach(quote -> views.add(mapper.toQuoteView(quote, now)));
+        var quotes = universe == null || universe.isBlank()
+                ? marketData.allQuotes()
+                : marketData.quotesFor(parseUniverse(universe));
+        quotes.values().forEach(quote -> views.add(mapper.toQuoteView(quote, now)));
         return views;
+    }
+
+    /** Why a universe shows no prices - futures data is a separate entitlement. */
+    @GetMapping("/quotes/availability")
+    public Map<String, Object> quoteAvailability(
+            @RequestParam(required = false) String universe) {
+        dev.aperture.instrument.TradableUniverse resolved = parseUniverse(universe);
+        return Map.of(
+                "universe", resolved.name(),
+                "quotable", watchlists.isQuotable(resolved),
+                "reason", watchlists.unquotableReason(resolved));
     }
 
     @GetMapping("/quotes/{symbol}")
@@ -80,19 +105,40 @@ public class MarketDataController {
     public ResponseEntity<ApiDtos.HistoryView> history(
             @PathVariable String symbol,
             @RequestParam(defaultValue = "SPLITS_ONLY") String policy,
-            @RequestParam(defaultValue = "120") int days) {
+            @RequestParam(defaultValue = "120") int days,
+            @RequestParam(required = false) String universe) {
 
-        Instrument instrument = referenceData.resolve(symbol).orElse(null);
-        if (instrument == null) {
-            return ResponseEntity.notFound().build();
-        }
+        dev.aperture.instrument.TradableUniverse resolvedUniverse = parseUniverse(universe);
         AdjustmentPolicy adjustment = parsePolicy(policy);
-        AdjustedSeries series =
-                priceHistory.recentSeries(instrument.id(), adjustment, Math.max(1, days));
+        Instrument instrument = referenceData.resolve(symbol).orElse(null);
+
+        AdjustedSeries series;
+        if (resolvedUniverse == dev.aperture.instrument.TradableUniverse.EQUITY
+                && instrument != null && priceHistory.hasHistory(instrument.id())) {
+            // The adjusted path: only equities have corporate actions to restate for.
+            series = priceHistory.recentSeries(instrument.id(), adjustment, Math.max(1, days));
+        } else {
+            // Anything not already backfilled - a searched equity, a crypto pair, an event
+            // contract - is fetched on demand. Crypto and event series never split, so they are
+            // raw by construction and carry no adjustment.
+            List<Bar> fetched = historyProvider.bars(symbol, resolvedUniverse);
+            if (fetched.isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+            List<Bar> recent = fetched.size() > Math.max(1, days)
+                    ? fetched.subList(fetched.size() - Math.max(1, days), fetched.size())
+                    : fetched;
+            series = new AdjustedSeries(recent, adjustment, recent.get(0).basis(), true,
+                    resolvedUniverse == dev.aperture.instrument.TradableUniverse.EQUITY
+                            ? "Fetched on demand; corporate actions are applied only to "
+                              + "instruments on the watchlist."
+                            : "Corporate actions do not apply to " + resolvedUniverse.label()
+                              + ".");
+        }
         List<Bar> bars = series.bars();
 
         List<ApiDtos.ActionView> inWindow = new ArrayList<>();
-        if (!bars.isEmpty()) {
+        if (!bars.isEmpty() && instrument != null) {
             LocalDate from = bars.get(0).sessionDate();
             LocalDate to = bars.get(bars.size() - 1).sessionDate();
             corporateActions.recordedFor(instrument.id()).stream()
@@ -102,7 +148,7 @@ public class MarketDataController {
         }
 
         return ResponseEntity.ok(new ApiDtos.HistoryView(
-                instrument.primarySymbol(),
+                instrument == null ? symbol.toUpperCase() : instrument.primarySymbol(),
                 adjustment.name(),
                 adjustment.label(),
                 adjustment.description(),
@@ -112,8 +158,12 @@ public class MarketDataController {
                 series.satisfied(),
                 series.note(),
                 bars.stream().map(mapper::toBarView).toList(),
-                priceHistory.returnOverWindow(instrument.id(), adjustment).orElse(null),
-                priceHistory.annualisedVolatility(instrument.id()).orElse(null),
+                // Computed from the bars actually shown, not from stored history. A searched
+                // symbol or a crypto pair has no entry in PriceHistory, and reading the stats
+                // from there left the chart's headline figures blank for everything off the
+                // watchlist.
+                windowReturn(bars),
+                annualisedVolatility(bars),
                 inWindow));
     }
 
@@ -224,6 +274,69 @@ public class MarketDataController {
         return referenceData.resolve(symbol)
                 .map(Instrument::id)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown symbol: " + symbol));
+    }
+
+    /** Total return across the displayed window, in percent. */
+    private static java.math.BigDecimal windowReturn(List<Bar> bars) {
+        if (bars.size() < 2) {
+            return null;
+        }
+        java.math.BigDecimal first = bars.get(0).close().value();
+        if (first.signum() <= 0) {
+            return null;
+        }
+        return bars.get(bars.size() - 1).close().value().subtract(first)
+                .multiply(java.math.BigDecimal.valueOf(100))
+                .divide(first, 2, java.math.RoundingMode.HALF_EVEN);
+    }
+
+    /**
+     * Annualised volatility of daily log returns, in percent.
+     *
+     * <p>Annualised with the 252-session convention even for crypto, which trades every day. It is
+     * the figure everyone quotes, and switching the convention per asset class would make the
+     * numbers incomparable across the very grid that shows them side by side.
+     */
+    private static java.math.BigDecimal annualisedVolatility(List<Bar> bars) {
+        if (bars.size() < 20) {
+            return null;
+        }
+        double sum = 0;
+        double sumSquares = 0;
+        int count = 0;
+        for (int i = 1; i < bars.size(); i++) {
+            double previous = bars.get(i - 1).close().value().doubleValue();
+            double current = bars.get(i).close().value().doubleValue();
+            if (previous <= 0 || current <= 0) {
+                continue;
+            }
+            double logReturn = Math.log(current / previous);
+            sum += logReturn;
+            sumSquares += logReturn * logReturn;
+            count++;
+        }
+        if (count < 2) {
+            return null;
+        }
+        double mean = sum / count;
+        double variance = (sumSquares / count) - (mean * mean);
+        if (variance <= 0) {
+            return null;
+        }
+        return java.math.BigDecimal.valueOf(Math.sqrt(variance) * Math.sqrt(252) * 100)
+                .setScale(2, java.math.RoundingMode.HALF_EVEN);
+    }
+
+    private static dev.aperture.instrument.TradableUniverse parseUniverse(String name) {
+        if (name == null || name.isBlank()) {
+            return dev.aperture.instrument.TradableUniverse.EQUITY;
+        }
+        try {
+            return dev.aperture.instrument.TradableUniverse.valueOf(name.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown universe: " + name
+                    + ". Expected EQUITY, CRYPTO, EVENT or FUTURES.");
+        }
     }
 
     private static AdjustmentPolicy parsePolicy(String name) {

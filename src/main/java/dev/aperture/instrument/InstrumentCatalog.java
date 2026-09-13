@@ -46,6 +46,9 @@ public class InstrumentCatalog {
     private final Map<TradableUniverse, Cached> cache = new EnumMap<>(TradableUniverse.class);
     private final Map<TradableUniverse, ReentrantLock> locks =
             new EnumMap<>(TradableUniverse.class);
+    /** Universes with a background refresh in flight. */
+    private final java.util.Set<TradableUniverse> refreshing =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public InstrumentCatalog(WebullInstrumentClient client, WebullClientHolder holder,
                              MarketClock clock) {
@@ -69,30 +72,82 @@ public class InstrumentCatalog {
         if (cached != null && cached.isFresh(clock.now())) {
             return cached.instruments();
         }
+        // Never fetch on the calling thread. Enumerating the event universe walks every series and
+        // takes the better part of a minute under load; doing that inline means one cold request
+        // hangs the UI, and concurrent requests queue behind it. The refresh is started in the
+        // background and callers get what is cached - empty on a first load, which `loading`
+        // reports so it is not mistaken for "nothing found".
+        startRefresh(universe);
+        return cached == null ? List.of() : cached.instruments();
+    }
+
+    /**
+     * Blocks until the universe is loaded, up to a limit.
+     *
+     * <p>For callers that can afford to wait and genuinely need the data - the analyst, which
+     * already runs for minutes and would otherwise reason about an empty universe. The UI must
+     * never use this.
+     */
+    public List<TradableInstrument> instrumentsNow(TradableUniverse universe, Duration timeout) {
+        Cached cached = cache.get(universe);
+        if (cached != null && cached.isFresh(clock.now())) {
+            return cached.instruments();
+        }
+        startRefresh(universe);
+        Instant deadline = clock.now().plus(timeout);
+        while (clock.now().isBefore(deadline)) {
+            Cached current = cache.get(universe);
+            if (current != null) {
+                return current.instruments();
+            }
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        Cached current = cache.get(universe);
+        return current == null ? List.of() : current.instruments();
+    }
+
+    /** Starts a background refresh unless one is already running for this universe. */
+    private void startRefresh(TradableUniverse universe) {
         ReentrantLock lock = locks.get(universe);
-        lock.lock();
+        if (!lock.tryLock()) {
+            return;
+        }
         try {
-            // Re-check: another thread may have populated it while this one waited.
-            cached = cache.get(universe);
+            Cached cached = cache.get(universe);
             if (cached != null && cached.isFresh(clock.now())) {
-                return cached.instruments();
+                return;
             }
-            List<TradableInstrument> fetched = client.fetch(universe);
-            if (fetched.isEmpty() && cached != null) {
-                // A failed refresh must not empty a good cache. Stale instruments beat none.
-                log.debug("Refresh of the {} universe returned nothing; keeping {} cached entries",
-                        universe.label(), cached.instruments().size());
-                return cached.instruments();
+            if (!refreshing.add(universe)) {
+                return;
             }
-            cache.put(universe, new Cached(fetched, clock.now()));
-            if (!fetched.isEmpty()) {
-                log.info("Loaded {} instrument(s) for the {} universe",
-                        fetched.size(), universe.label());
-            }
-            return fetched;
         } finally {
             lock.unlock();
         }
+        Thread worker = new Thread(() -> {
+            try {
+                List<TradableInstrument> fetched = client.fetch(universe);
+                if (fetched.isEmpty() && cache.get(universe) != null) {
+                    // A failed refresh must not empty a good cache. Stale instruments beat none.
+                    return;
+                }
+                cache.put(universe, new Cached(fetched, clock.now()));
+                if (!fetched.isEmpty()) {
+                    log.info("Loaded {} instrument(s) for the {} universe",
+                            fetched.size(), universe.label());
+                }
+            } catch (RuntimeException e) {
+                log.warn("Could not load the {} universe: {}", universe.label(), e.getMessage());
+            } finally {
+                refreshing.remove(universe);
+            }
+        }, "catalog-" + universe.name().toLowerCase());
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /**
@@ -109,7 +164,8 @@ public class InstrumentCatalog {
         List<TradableInstrument> all = instruments(universe);
 
         if (all.isEmpty()) {
-            return new Listing(universe, List.of(), 0, 0, false, unavailableReason());
+            return new Listing(universe, List.of(), 0, 0, false,
+                    isLoading(universe) ? "" : unavailableReason(), isLoading(universe));
         }
 
         List<TradableInstrument> filtered = all.stream()
@@ -130,7 +186,7 @@ public class InstrumentCatalog {
                 : filtered;
 
         return new Listing(universe, page, filtered.size(), all.size(),
-                filtered.size() > page.size(), "");
+                filtered.size() > page.size(), "", false);
     }
 
     /** Instrument counts per group, for the grouping summary above the table. */
@@ -174,12 +230,21 @@ public class InstrumentCatalog {
             int matching,
             int total,
             boolean truncated,
-            String unavailableReason) {
+            String unavailableReason,
+            /** A first fetch is still running; empty here means "not yet", not "none". */
+            boolean loading) {
 
         public boolean isAvailable() {
             return total > 0;
         }
     }
+
+    /** Whether a first fetch for this universe is in flight. */
+    public boolean isLoading(TradableUniverse universe) {
+        return refreshing.contains(universe) && cache.get(universe) == null;
+    }
+
+
 
     private record Cached(List<TradableInstrument> instruments, Instant fetchedAt) {
         boolean isFresh(Instant now) {

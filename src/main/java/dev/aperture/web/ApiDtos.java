@@ -34,7 +34,13 @@ public final class ApiDtos {
             String dataSource,
             boolean live,
             long ageSeconds,
-            String eventTime) {
+            String eventTime,
+            /*
+             * Which universe this instrument belongs to. Carried on every quote because the live
+             * WebSocket pushes all of them down one channel: without it the grid cannot tell a
+             * crypto tick from an equity one and shows every account's instruments at once.
+             */
+            String universe) {
     }
 
     /** One bar on the chart. */
@@ -105,7 +111,15 @@ public final class ApiDtos {
             String accountType,
             String accountClass,
             String environment,
-            boolean real) {
+            boolean real,
+            /*
+             * What this account trades, derived from its class. Carried here because it is known
+             * the instant an account is selected, while enumerating the instruments themselves
+             * takes seconds - the event catalog alone is 3,000+ contracts gathered series by
+             * series. The UI should not wait on that to find out which grid to show.
+             */
+            String universe,
+            String universeLabel) {
     }
 
     /** One environment's availability, so the UI can explain an empty picker. */
@@ -189,6 +203,7 @@ public final class ApiDtos {
             String environment,
             boolean available,
             String unavailableReason,
+            boolean loading,
             int matching,
             int total,
             boolean truncated,

@@ -4,6 +4,7 @@ import dev.aperture.config.ApertureProperties;
 import dev.aperture.instrument.Instrument;
 import dev.aperture.instrument.InstrumentId;
 import dev.aperture.instrument.ReferenceDataService;
+import dev.aperture.instrument.TradableUniverse;
 import dev.aperture.time.MarketClock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -40,6 +41,8 @@ public class MarketDataService {
     private final WebullStreamingQuoteSource streaming;
     private final WebullQuoteClient rest;
     private final SimulatedQuoteSource simulated;
+    private final WebullInstrumentClient instrumentClient;
+    private final WatchlistService watchlists;
     private final WebullClientHolder holder;
     private final MarketClock clock;
     private final ApertureProperties.MarketData config;
@@ -53,6 +56,8 @@ public class MarketDataService {
                              WebullStreamingQuoteSource streaming,
                              WebullQuoteClient rest,
                              SimulatedQuoteSource simulated,
+                             WebullInstrumentClient instrumentClient,
+                             WatchlistService watchlists,
                              WebullClientHolder holder,
                              MarketClock clock,
                              ApertureProperties properties) {
@@ -60,6 +65,8 @@ public class MarketDataService {
         this.streaming = streaming;
         this.rest = rest;
         this.simulated = simulated;
+        this.instrumentClient = instrumentClient;
+        this.watchlists = watchlists;
         this.holder = holder;
         this.clock = clock;
         this.config = properties.marketData();
@@ -84,8 +91,17 @@ public class MarketDataService {
 
     /** Every current quote, in watchlist order. */
     public Map<InstrumentId, Quote> allQuotes() {
+        return quotesForWatchlist(referenceData.watchlist());
+    }
+
+    /** The watchlist quotes for one universe - what that account's grid shows. */
+    public Map<InstrumentId, Quote> quotesFor(TradableUniverse universe) {
+        return quotesForWatchlist(watchlists.watchlist(universe));
+    }
+
+    private Map<InstrumentId, Quote> quotesForWatchlist(List<Instrument> instruments) {
         Map<InstrumentId, Quote> out = new LinkedHashMap<>();
-        for (Instrument instrument : referenceData.watchlist()) {
+        for (Instrument instrument : instruments) {
             Quote quote = latest.get(instrument.id());
             if (quote != null) {
                 out.put(instrument.id(), quote);
@@ -112,7 +128,48 @@ public class MarketDataService {
      * would spend request budget to produce a staler answer.
      */
     public void poll() {
-        List<Instrument> instruments = referenceData.watchlist();
+        pollEquities();
+        pollCrypto();
+        pollEvents();
+    }
+
+    /**
+     * Crypto pairs, from their own snapshot endpoint.
+     *
+     * <p>A separate call from the equity one: {@code getSnapshots} does not serve crypto, and the
+     * streaming feed is an equity feed, so these are polled rather than pushed.
+     */
+    private void pollCrypto() {
+        if (!holder.isConnected()) {
+            return;
+        }
+        List<Instrument> instruments = watchlists.watchlist(TradableUniverse.CRYPTO);
+        if (instruments.isEmpty()) {
+            return;
+        }
+        Set<String> symbols = instruments.stream()
+                .map(Instrument::primarySymbol)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        instrumentClient.cryptoQuotes(symbols, clock).values().forEach(this::accept);
+    }
+
+    /** Event contracts, quoted from the YES side. */
+    private void pollEvents() {
+        if (!holder.isConnected()) {
+            return;
+        }
+        List<Instrument> instruments = watchlists.watchlist(TradableUniverse.EVENT);
+        if (instruments.isEmpty()) {
+            return;
+        }
+        Set<String> symbols = instruments.stream()
+                .map(Instrument::primarySymbol)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        instrumentClient.eventQuotes(symbols, clock).values().forEach(this::accept);
+    }
+
+    private void pollEquities() {
+        List<Instrument> instruments = referenceData.watchlist(TradableUniverse.EQUITY);
         if (instruments.isEmpty()) {
             return;
         }
@@ -128,7 +185,9 @@ public class MarketDataService {
         }
 
         // Anything still without a live quote falls back to the simulator, so the UI is never
-        // blank. The provenance label carries the distinction.
+        // blank. The provenance label carries the distinction. Equities only - the simulator
+        // models equity price behaviour, and inventing a crypto or event price would be a
+        // different and less defensible claim.
         simulated.tick();
         for (Instrument instrument : instruments) {
             Quote existing = latest.get(instrument.id());

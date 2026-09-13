@@ -9,7 +9,13 @@ public enum SecurityType {
     ADR("ADR"),
     REIT("REIT"),
     CLOSED_END_FUND("Closed-end fund"),
-    INDEX("Index");
+    INDEX("Index"),
+
+    /* Non-equity types. These decide which vendor endpoints an instrument can use at all, so
+       they must be modelled rather than inferred from the symbol. */
+    CRYPTO("Crypto"),
+    EVENT_CONTRACT("Event contract"),
+    FUTURE("Futures contract");
 
     private final String label;
 
@@ -26,8 +32,29 @@ public enum SecurityType {
         return this == ETF || this == ETN || this == CLOSED_END_FUND;
     }
 
+    /**
+     * Which universe this type belongs to.
+     *
+     * <p>Drives which vendor endpoints apply: equity bars and snapshots are simply the wrong calls
+     * for a crypto pair or an event contract, and issuing them produces confusing failures rather
+     * than useful data.
+     */
+    public TradableUniverse universe() {
+        return switch (this) {
+            case CRYPTO -> TradableUniverse.CRYPTO;
+            case EVENT_CONTRACT -> TradableUniverse.EVENT;
+            case FUTURE -> TradableUniverse.FUTURES;
+            default -> TradableUniverse.EQUITY;
+        };
+    }
+
     /** An index can be quoted but never held or traded. */
     public boolean isTradable() {
         return this != INDEX;
+    }
+
+    /** Whether this is a listed equity or fund, as opposed to crypto, futures or an event. */
+    public boolean isEquityLike() {
+        return universe() == TradableUniverse.EQUITY && this != INDEX;
     }
 }
