@@ -341,7 +341,7 @@ select:disabled { color: var(--text-faint); }
 
 .universe-panel .table-scroll { max-height: 360px; }
 .universe-panel .grid td { font-size: 11.5px; }
-.universe-panel .grid tbody tr { cursor: default; }
+.universe-panel .grid tbody tr { cursor: pointer; }
 .universe-panel .grid .attr { color: var(--text-dim); font-family: var(--mono); text-align: right; }
 .universe-panel .grid .name { color: var(--text-dim); max-width: 340px; overflow: hidden;
   text-overflow: ellipsis; }

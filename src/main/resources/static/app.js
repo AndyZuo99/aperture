@@ -229,8 +229,11 @@ function openQuoteStream() {
 function selectSymbol(symbol, universe, name) {
   state.selectedSymbol = symbol;
   state.chartUniverse = universe || state.universe || 'EQUITY';
+  // Both tables can select: the watchlist grid and the tradable-instruments panel.
   document.querySelectorAll('tr[data-symbol]').forEach((row) =>
     row.classList.toggle('is-selected', row.dataset.symbol === symbol));
+  document.querySelectorAll('tr[data-chart]').forEach((row) =>
+    row.classList.toggle('is-selected', row.dataset.chart === symbol));
 
   const quote = state.quotes.get(symbol);
   $('chartSymbol').textContent = symbol;
@@ -715,13 +718,20 @@ function renderUniverse(data) {
   }
 
   body.innerHTML = data.instruments.map((i) => `
-    <tr class="${i.tradable ? '' : 'not-tradable'}" data-chart="${escapeAttr(i.symbol)}"
-        data-chart-name="${escapeAttr(i.name)}">
+    <tr class="${i.tradable ? '' : 'not-tradable'}${
+        i.symbol === state.selectedSymbol ? ' is-selected' : ''}"
+        data-chart="${escapeAttr(i.symbol)}" data-chart-name="${escapeAttr(i.name)}">
       <td class="sym">${i.symbol}${i.tradable ? '' : ' <span class="badge badge-halted">halted</span>'}</td>
       <td class="name" title="${escapeAttr(i.name)}">${i.name}</td>
       <td class="flat">${i.group}</td>
       ${data.columns.map((c) => `<td class="attr">${i.attributes[c] || '—'}</td>`).join('')}
     </tr>`).join('');
+
+  // These rows are the other way into the chart - this panel has its own search, and a row you
+  // have just filtered down to is exactly the thing you want to look at.
+  body.querySelectorAll('tr[data-chart]').forEach((row) =>
+    row.addEventListener('click', () =>
+      selectSymbol(row.dataset.chart, data.universe, row.dataset.chartName)));
 }
 
 function renderGroupChips(groups) {

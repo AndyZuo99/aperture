@@ -229,8 +229,10 @@ blocking variant instead; reasoning about an empty universe would be worse than 
 
 ### Searching, and charting anything
 
-The chart is no longer limited to the watchlist. A search box queries the selected account's own
-tradable universe — so an events account searching "bitcoin" gets Bitcoin *price-range contracts*,
+The chart is no longer limited to the watchlist. There are two ways in, and both chart whatever
+you pick: the search box in the chart header, and clicking any row in the Tradable-instruments
+panel below — that panel has its own search, and a row you have just filtered down to is exactly
+the thing you want to look at. A search box queries the selected account's own tradable universe — so an events account searching "bitcoin" gets Bitcoin *price-range contracts*,
 while a margin account gets Coca-Cola's listed shares — and any result can be charted.
 
 Whatever you select stays selected. The grid refreshes every fifteen seconds, and it used to
