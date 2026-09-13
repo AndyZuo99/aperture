@@ -38,10 +38,16 @@ public class TradePlanner {
 
     private final MarketDataService marketData;
     private final HistoryProvider history;
+    private final dev.aperture.marketdata.WebullInstrumentClient instrumentClient;
+    private final dev.aperture.time.MarketClock clock;
 
-    public TradePlanner(MarketDataService marketData, HistoryProvider history) {
+    public TradePlanner(MarketDataService marketData, HistoryProvider history,
+                        dev.aperture.marketdata.WebullInstrumentClient instrumentClient,
+                        dev.aperture.time.MarketClock clock) {
         this.marketData = marketData;
         this.history = history;
+        this.instrumentClient = instrumentClient;
+        this.clock = clock;
     }
 
     /**
@@ -55,10 +61,29 @@ public class TradePlanner {
                                               TradableUniverse universe, Quantity quantity,
                                               Price targetPrice, int horizonSessions,
                                               String conviction, String rationale) {
+        return plan(symbol, name, universe, quantity, targetPrice, horizonSessions, conviction,
+                rationale, Optional.empty());
+    }
+
+    /**
+     * @param eventOutcome which side of a binary event contract this is. Required for
+     *     {@link TradableUniverse#EVENT} and meaningless elsewhere - YES and NO are separately
+     *     quoted instruments on the same market, so the side has to be fixed before any price
+     *     applies.
+     */
+    public Optional<TradeRecommendation> plan(String symbol, String name,
+                                              TradableUniverse universe, Quantity quantity,
+                                              Price targetPrice, int horizonSessions,
+                                              String conviction, String rationale,
+                                              Optional<dev.aperture.instrument.EventOutcome>
+                                                      eventOutcome) {
         // On demand, not from the cache: a shortlisted candidate is not streamed, and pricing
         // an entry from yesterday's close when a live ask is one request away would understate
         // or overstate every figure that follows from it.
-        Optional<Quote> quote = marketData.quoteOnDemand(symbol);
+        Optional<Quote> quote = universe == TradableUniverse.EVENT
+                ? eventOutcome.flatMap(outcome ->
+                        instrumentClient.eventQuote(symbol, outcome, clock))
+                : marketData.quoteOnDemand(symbol);
         List<Bar> bars = history.bars(symbol, universe);
 
         // Fall back to the last bar's close when there is no live quote - common for instruments
@@ -71,6 +96,15 @@ public class TradePlanner {
 
         List<String> warnings = new ArrayList<>();
         boolean viable = true;
+
+        if (universe == TradableUniverse.EVENT && eventOutcome.isEmpty()) {
+            // The vendor rejects an event order without one, and guessing a side would take the
+            // opposite position at a completely different price.
+            warnings.add("This is an event contract, which trades as separate YES and NO sides at "
+                    + "different prices. No side was specified, so it cannot be priced or "
+                    + "submitted.");
+            viable = false;
+        }
 
         // --- the arithmetic ---
         Money notional = entry.times(quantity);
@@ -157,7 +191,7 @@ public class TradePlanner {
 
         return Optional.of(new TradeRecommendation(
                 symbol, name, universe.name(), conviction, rationale,
-                horizonSessions, legs, economics));
+                horizonSessions, eventOutcome, legs, economics));
     }
 
     /** A market buy lifts the offer, so the ask is the honest entry, not the last print. */

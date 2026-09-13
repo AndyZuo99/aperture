@@ -475,6 +475,48 @@ async function loadActions() {
   $('actionHint').textContent = `${actions.length} recorded`;
 }
 
+/* ── ask suggestions ─────────────────────────────────────────────── */
+
+/*
+ * The prompts follow the account's universe. "Compare NVDA unadjusted vs total return" is a
+ * useless suggestion to an events account that cannot buy a share, and it teaches the wrong thing
+ * about what this account does.
+ */
+const ASK_SUGGESTIONS = {
+  EQUITY: [
+    'Which candidate has the best reward-to-risk for a 3% target this month?',
+    "Compare NVDA's 12-month return unadjusted vs total return.",
+    'Which watchlist name has the widest spread right now?',
+  ],
+  CRYPTO: [
+    'How volatile is BTCUSD over the last 250 sessions?',
+    'How often has ETHUSD gained 5% within a month historically?',
+    'Which crypto pairs are open for trading right now?',
+  ],
+  EVENT: [
+    'What event contracts can this account trade right now?',
+    'What are the YES and NO prices on the Fed decision markets?',
+    'Which event series have the most markets listed?',
+  ],
+  FUTURES: [
+    'Which futures product classes can this account trade?',
+    'Why can you not analyse futures contracts on this account?',
+    'Summarise this account: balances, buying power and open positions.',
+  ],
+};
+
+function renderAskSuggestions(universe) {
+  const prompts = ASK_SUGGESTIONS[universe] || ASK_SUGGESTIONS.EQUITY;
+  const container = $('suggestions');
+  container.innerHTML = prompts
+    .map((prompt) => `<button type="button" class="chip">${prompt}</button>`).join('');
+  container.querySelectorAll('.chip').forEach((chip) =>
+    chip.addEventListener('click', () => {
+      $('askInput').value = chip.textContent;
+      ask(chip.textContent);
+    }));
+}
+
 /* ── tradable universe ───────────────────────────────────────────── */
 
 /*
@@ -506,7 +548,9 @@ async function loadUniverse() {
 }
 
 function renderUniverse(data) {
+  const changed = state.universe !== data.universe;
   state.universe = data.universe;
+  if (changed) renderAskSuggestions(data.universe);
 
   $('universeLabel').textContent = data.label.toLowerCase();
   const badge = $('universeBadge');
@@ -726,6 +770,7 @@ function renderRecommendation(rec) {
     <div class="rec ${e.viable ? '' : 'not-viable'}">
       <div class="rec-head">
         <span class="rec-symbol">${rec.symbol}</span>
+        ${rec.eventOutcome ? `<span class="outcome outcome-${rec.eventOutcome}">${rec.eventOutcome}</span>` : ''}
         ${rec.conviction ? `<span class="conviction conviction-${rec.conviction}">${rec.conviction}</span>` : ''}
         <span class="flat">${rec.universe}</span>
         <span class="rec-horizon">${rec.horizon}</span>
@@ -782,9 +827,10 @@ async function submitRecommendation(symbol, button) {
       if (b.dataset.symbol !== symbol) b.textContent = 'Submit orders';
     });
     button.classList.add('confirming');
+    const side = rec.eventOutcome ? ` ${rec.eventOutcome}` : '';
     const entry = rec.legs[0].description;
     const exit = rec.legs[1].description;
-    button.textContent = `Confirm: ${entry} then ${exit}`;
+    button.textContent = `Confirm${side}: ${entry} then ${exit}`;
     setTimeout(() => {
       if (state.armedSubmit === symbol) {
         state.armedSubmit = null;
@@ -818,6 +864,9 @@ async function submitRecommendation(symbol, button) {
       // Lets the server refuse if the market has moved away from what this card shows.
       expectedEntryPrice: Number(rec.economics.entryPrice),
       allowExtendedHours: extended ? extended.checked : false,
+      // Required for event contracts: YES and NO are separately priced instruments on the same
+      // market, and the vendor rejects an event order without a side.
+      eventOutcome: rec.eventOutcome || null,
     });
     renderSubmission(box, result);
   } catch (e) {
@@ -910,12 +959,6 @@ function wireEvents() {
       $('recommendMode').hidden = state.analystMode !== 'recommend';
     }));
 
-  document.querySelectorAll('.chip').forEach((chip) =>
-    chip.addEventListener('click', () => {
-      $('askInput').value = chip.textContent;
-      ask(chip.textContent);
-    }));
-
   // Redraw on resize: the canvas is sized in device pixels and would otherwise blur.
   let resizeTimer;
   window.addEventListener('resize', () => {
@@ -929,6 +972,7 @@ function start() {
   tickClock();
   setInterval(tickClock, 1000);
 
+  renderAskSuggestions(state.universe || 'EQUITY');
   refreshStatus();
   loadOrderCapability();
   loadQuotes();

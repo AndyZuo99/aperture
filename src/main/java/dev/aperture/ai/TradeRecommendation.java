@@ -22,6 +22,7 @@ public record TradeRecommendation(
         String conviction,
         String rationale,
         int horizonSessions,
+        java.util.Optional<dev.aperture.instrument.EventOutcome> eventOutcome,
         List<OrderLeg> legs,
         TradeEconomics economics) {
 
@@ -32,7 +33,14 @@ public record TradeRecommendation(
         universe = universe == null ? "" : universe;
         conviction = conviction == null ? "" : conviction;
         rationale = rationale == null ? "" : rationale;
+        Objects.requireNonNull(eventOutcome, "eventOutcome");
         legs = List.copyOf(legs);
+    }
+
+    /** How the instrument should be labelled - event contracts need their side stating. */
+    public String displaySymbol() {
+        return eventOutcome.map(outcome -> symbol + " " + outcome.label().toUpperCase())
+                .orElse(symbol);
     }
 
     /** Roughly how long the horizon is in calendar terms, for display. */

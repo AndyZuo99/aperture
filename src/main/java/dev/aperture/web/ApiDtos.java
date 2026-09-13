@@ -240,6 +240,8 @@ public final class ApiDtos {
             String rationale,
             int horizonSessions,
             String horizon,
+            String eventOutcome,
+            String displaySymbol,
             List<OrderLegView> legs,
             EconomicsView economics) {
     }
@@ -293,7 +295,8 @@ public final class ApiDtos {
             BigDecimal targetPrice,
             Integer horizonSessions,
             BigDecimal expectedEntryPrice,
-            Boolean allowExtendedHours) {
+            Boolean allowExtendedHours,
+            String eventOutcome) {
     }
 
     public record SubmissionView(

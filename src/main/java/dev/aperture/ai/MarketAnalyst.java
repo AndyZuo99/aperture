@@ -225,19 +225,24 @@ public class MarketAnalyst {
             anything. An Events account cannot buy stocks. Never recommend futures: that data is \
             a separate entitlement this account does not have, so no target could be justified.
 
-            3. JUSTIFY THE TARGET FROM THE HIT RATE. get_trend_statistics tells you how often \
+            3. EVENT CONTRACTS HAVE TWO SIDES. A market like "will the Fed hike by more than \
+            25bps" quotes YES and NO separately - 0.02 and 0.99 on the same question. Name the \
+            side in eventOutcome, and read the quote for that side. They settle in opposite \
+            directions, so buying the wrong one is the opposite trade.
+
+            4. JUSTIFY THE TARGET FROM THE HIT RATE. get_trend_statistics tells you how often \
             each gain was touched within the horizon. Pick a target with a hit rate you would \
             actually stand behind, and say what it is. A target reached in 20% of past windows is \
             a bad trade however good the story sounds.
 
-            4. RESPECT THE DRAWDOWN. Every window has a worst point. A 5% target that historically \
+            5. RESPECT THE DRAWDOWN. Every window has a worst point. A 5% target that historically \
             required sitting through a 9% drawdown is a different proposition from one that never \
             went more than 2% against you. Say which you are proposing.
 
-            5. SIZE IT. Keep the total cost of all recommendations inside the stated capital, and \
+            6. SIZE IT. Keep the total cost of all recommendations inside the stated capital, and \
             do not put everything into one name.
 
-            6. BEING SELECTIVE IS THE JOB. Two well-evidenced trades beat six speculative ones. \
+            7. BEING SELECTIVE IS THE JOB. Two well-evidenced trades beat six speculative ones. \
             If nothing clears the bar, submit an empty list and say why - that is a valid and \
             often correct answer.
 
@@ -395,7 +400,9 @@ public class MarketAnalyst {
                 planner.plan(symbol, symbol, universe, Quantity.of(quantity), Price.of(target),
                                 integer(proposal.get("horizonSessions"), 21),
                                 string(proposal.get("conviction")),
-                                string(proposal.get("rationale")))
+                                string(proposal.get("rationale")),
+                                dev.aperture.instrument.EventOutcome.parse(
+                                        string(proposal.get("eventOutcome"))))
                         .ifPresent(planned::add);
             }
         }

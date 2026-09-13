@@ -41,13 +41,16 @@ class TradePlannerTest {
 
     private MarketDataService marketData;
     private HistoryProvider history;
+    private dev.aperture.marketdata.WebullInstrumentClient instrumentClient;
     private TradePlanner planner;
 
     @BeforeEach
     void setUp() {
         marketData = mock(MarketDataService.class);
         history = mock(HistoryProvider.class);
-        planner = new TradePlanner(marketData, history);
+        instrumentClient = mock(dev.aperture.marketdata.WebullInstrumentClient.class);
+        planner = new TradePlanner(marketData, history, instrumentClient,
+                mock(dev.aperture.time.MarketClock.class));
         when(history.bars(anyString(), any())).thenReturn(flatHistory());
     }
 
@@ -173,6 +176,41 @@ class TradePlannerTest {
 
         assertThat(planner.plan("TEST", "Test", TradableUniverse.EQUITY,
                 Quantity.of(10), Price.of(110), 21, "HIGH", "because")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an event contract with no side is unviable, not priced")
+    void eventWithoutASideIsUnviable() {
+        // YES and NO are separately quoted instruments on the same market, so without a side
+        // there is no price to work from - and the vendor rejects such an order anyway.
+        TradeRecommendation plan = planner.plan("KXFED-26SEP-H26", "Fed hike",
+                        TradableUniverse.EVENT, Quantity.of(10), Price.of(0.50), 21, "HIGH",
+                        "because", Optional.empty())
+                .orElseThrow();
+
+        assertThat(plan.economics().viable()).isFalse();
+        assertThat(plan.economics().warnings())
+                .anyMatch(w -> w.contains("YES and NO"));
+    }
+
+    @Test
+    @DisplayName("an event contract is priced from the side actually chosen")
+    void eventIsPricedFromItsOwnSide() {
+        // The same market quotes YES at 0.02 and NO at 0.99. Pricing NO off the YES quote would
+        // be the opposite trade at fifty times the price.
+        when(instrumentClient.eventQuote(anyString(),
+                org.mockito.ArgumentMatchers.eq(dev.aperture.instrument.EventOutcome.NO), any()))
+                .thenReturn(Optional.of(quote(0.98, 0.99, 0.98, QuoteProvenance.LIVE_REST)));
+
+        TradeRecommendation plan = planner.plan("KXFED-26SEP-H26", "Fed hike",
+                        TradableUniverse.EVENT, Quantity.of(10), Price.of(1.00), 21, "HIGH",
+                        "because", Optional.of(dev.aperture.instrument.EventOutcome.NO))
+                .orElseThrow();
+
+        assertThat(plan.economics().entryPrice().toDisplay())
+                .isEqualByComparingTo(new BigDecimal("0.99"));
+        assertThat(plan.eventOutcome()).contains(dev.aperture.instrument.EventOutcome.NO);
+        assertThat(plan.displaySymbol()).isEqualTo("KXFED-26SEP-H26 NO");
     }
 
     // --- helpers ---

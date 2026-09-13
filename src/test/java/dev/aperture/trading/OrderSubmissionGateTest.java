@@ -114,6 +114,34 @@ class OrderSubmissionGateTest {
     }
 
     @Test
+    @DisplayName("an event contract with no side is refused before it reaches the venue")
+    void eventWithoutASideIsRefused() {
+        // This is the reported failure: the vendor answers
+        // "invalid event_outcome, value: null". Aperture refuses first, with a reason that
+        // explains the problem rather than relaying a parameter error.
+        OrderSubmissionService service = serviceWith(gate(false, ""));
+        account(TradingEnvironment.SANDBOX, "EVENTS_CASH");
+
+        TradeEconomics economics = new TradeEconomics(
+                Price.of(0.02), Price.of(0.50), Money.usd(20), Money.usd(480),
+                BigDecimal.valueOf(2400), BigDecimal.ZERO, BigDecimal.valueOf(2400),
+                Optional.empty(), Optional.empty(), Optional.empty(),
+                BigDecimal.valueOf(-10), Optional.empty(), List.of(), true);
+        TradeRecommendation event = new TradeRecommendation(
+                "KXFED-26SEP-H26", "Fed hike", "EVENT", "HIGH", "because", 21,
+                Optional.empty(),
+                List.of(OrderLeg.marketBuy(Quantity.of(10), "in"),
+                        OrderLeg.gtcSellLimit(Quantity.of(10), Price.of(0.50), "out")),
+                economics);
+
+        SubmissionResult result = service.submit(TradingEnvironment.SANDBOX, "acct", event);
+
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.refusedReason()).contains("no side was specified");
+        verify(holder, never()).tradeClient(any());
+    }
+
+    @Test
     @DisplayName("an unknown account is refused before anything is built")
     void unknownAccountIsRefused() {
         OrderSubmissionService service = serviceWith(gate(false, ""));
@@ -184,6 +212,7 @@ class OrderSubmissionGateTest {
                 BigDecimal.valueOf(-5), Optional.empty(),
                 viable ? List.of() : List.of("target is at or below the entry"), viable);
         return new TradeRecommendation("TEST", "Test", "EQUITY", "HIGH", "because", 21,
+                Optional.empty(),
                 List.of(OrderLeg.marketBuy(Quantity.of(10), "in"),
                         OrderLeg.gtcSellLimit(Quantity.of(10), Price.of(110), "out")),
                 economics);

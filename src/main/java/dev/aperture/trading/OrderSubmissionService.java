@@ -141,6 +141,16 @@ public class OrderSubmissionService {
             return SubmissionResult.refused(
                     "Expected an entry and an exit leg.", environment.name(), label);
         }
+        boolean isEvent = "EVENT".equalsIgnoreCase(recommendation.universe());
+        if (isEvent && recommendation.eventOutcome().isEmpty()) {
+            // The vendor rejects this outright - "invalid event_outcome, value: null" - and
+            // defaulting to a side would open the opposite position at a different price.
+            return SubmissionResult.refused(
+                    "This is an event contract and no side was specified. YES and NO are "
+                            + "separately priced instruments on the same market, so one must be "
+                            + "chosen explicitly.",
+                    environment.name(), label);
+        }
         if (!recommendation.economics().viable()) {
             // The planner already decided this plan cannot profit. Submitting it anyway would
             // make the viability check decorative.
@@ -253,6 +263,10 @@ public class OrderSubmissionService {
         item.setQuantity(leg.quantity().toDisplay().toPlainString());
         item.setEntrustType("QTY");
         item.setSupportTradingSession(tradingSession);
+        // Required on every event order; its absence is rejected as
+        // "invalid event_outcome, value: null".
+        recommendation.eventOutcome()
+                .ifPresent(outcome -> item.setEventOutcome(outcome.wireValue()));
         leg.limitPrice().ifPresent(price ->
                 item.setLimitPrice(price.toDisplay().toPlainString()));
 

@@ -94,7 +94,8 @@ public class OrderController {
                 Price.of(request.targetPrice()),
                 request.horizonSessions() == null ? 21 : request.horizonSessions(),
                 "",
-                "Submitted from a recommendation");
+                "Submitted from a recommendation",
+                dev.aperture.instrument.EventOutcome.parse(request.eventOutcome()));
 
         if (replanned.isEmpty()) {
             return toView(SubmissionResult.refused(

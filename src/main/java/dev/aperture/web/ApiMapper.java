@@ -205,6 +205,9 @@ public class ApiMapper {
                 recommendation.rationale(),
                 recommendation.horizonSessions(),
                 recommendation.horizonDescription(),
+                recommendation.eventOutcome()
+                        .map(dev.aperture.instrument.EventOutcome::name).orElse(null),
+                recommendation.displaySymbol(),
                 legs,
                 new ApiDtos.EconomicsView(
                         economics.entryPrice().toDisplay(),

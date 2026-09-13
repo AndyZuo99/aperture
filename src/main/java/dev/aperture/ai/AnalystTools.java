@@ -175,7 +175,9 @@ final class AnalystTools {
             .name("submit_recommendations")
             .description("""
                     Submit the final trade recommendations. Each one becomes a market buy now \
-                    plus a good-til-cancelled sell limit at your target. Supply only the symbol, \
+                    plus a good-til-cancelled sell limit at your target. For an event contract \
+                    you must also name the side (eventOutcome YES or NO) - the two sides are \
+                    separately priced instruments on the same market. Supply only the symbol, \
                     the quantity, the target price and the horizon - Aperture computes the entry \
                     price, the profit, the historical hit rate for your exact target and the \
                     reward-to-risk, and will flag any plan whose target is unreachable or whose \
@@ -241,6 +243,13 @@ final class AnalystTools {
                 "description", "The GTC sell limit price. Must be above the current ask."));
         properties.put("horizonSessions", Map.of("type", "integer",
                 "description", "Trading sessions to allow. 21 is about a month."));
+        properties.put("eventOutcome", Map.of("type", "string",
+                "enum", List.of("YES", "NO"),
+                "description", "REQUIRED for event contracts, ignored otherwise. An event market "
+                        + "trades as two separate instruments at different prices - YES might be "
+                        + "0.02 while NO is 0.99 on the same question - so state which side you "
+                        + "are buying. Check the quote for the side you choose; do not assume the "
+                        + "quoted price is YES."));
         properties.put("conviction", Map.of("type", "string",
                 "enum", List.of("HIGH", "MEDIUM", "LOW"),
                 "description", "Your confidence in this specific plan."));

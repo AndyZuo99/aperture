@@ -187,6 +187,73 @@ public class WebullInstrumentClient {
         }
     }
 
+    /**
+     * A live quote for one side of a binary event contract.
+     *
+     * <p>Event contracts quote both sides at once - YES at 0.02 and NO at 0.99 on the same market -
+     * so the side has to be chosen before a price means anything. Pricing a NO position off the
+     * YES quote is not a small error; it is the opposite trade at fifty times the price.
+     */
+    public Optional<dev.aperture.marketdata.Quote> eventQuote(
+            String symbol, dev.aperture.instrument.EventOutcome outcome,
+            dev.aperture.time.MarketClock clock) {
+        Optional<DataClient> client = holder.dataClient();
+        if (client.isEmpty() || symbol == null || symbol.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            var snapshots = client.get().getEventSnapshot(
+                    java.util.Set.of(symbol.toUpperCase()), Category.US_EVENT.name());
+            if (snapshots == null || snapshots.isEmpty()) {
+                return Optional.empty();
+            }
+            var snapshot = snapshots.get(0);
+            boolean yes = outcome == dev.aperture.instrument.EventOutcome.YES;
+            java.math.BigDecimal bid = WebullQuoteClient.decimal(
+                    yes ? snapshot.getYesBid() : snapshot.getNoBid());
+            java.math.BigDecimal ask = WebullQuoteClient.decimal(
+                    yes ? snapshot.getYesAsk() : snapshot.getNoAsk());
+            java.math.BigDecimal size = WebullQuoteClient.decimal(
+                    yes ? snapshot.getYesBidSize() : snapshot.getNoBidSize());
+            java.math.BigDecimal askSize = WebullQuoteClient.decimal(
+                    yes ? snapshot.getYesAskSize() : snapshot.getNoAskSize());
+
+            // `price` is the last traded YES price. For a NO position the equivalent is its
+            // complement, since the pair always sums to one.
+            java.math.BigDecimal lastYes = WebullQuoteClient.decimal(snapshot.getPrice());
+            java.math.BigDecimal last = lastYes == null
+                    ? ask
+                    : (yes ? lastYes : java.math.BigDecimal.ONE.subtract(lastYes));
+            if (last == null || last.signum() <= 0) {
+                return Optional.empty();
+            }
+            java.time.Instant now = clock.now();
+            java.time.Instant eventTime = snapshot.getLastTradeTime() == null
+                    ? now : java.time.Instant.ofEpochMilli(snapshot.getLastTradeTime());
+
+            return Optional.of(new dev.aperture.marketdata.Quote(
+                    dev.aperture.instrument.InstrumentId.of(symbol.toUpperCase()),
+                    dev.aperture.common.Price.of(orZero(bid)),
+                    dev.aperture.common.Quantity.of(orZero(size)),
+                    dev.aperture.common.Price.of(orZero(ask)),
+                    dev.aperture.common.Quantity.of(orZero(askSize)),
+                    dev.aperture.common.Price.of(last),
+                    dev.aperture.common.Quantity.of(orZero(
+                            WebullQuoteClient.decimal(snapshot.getVolume()))),
+                    dev.aperture.common.Price.of(last),
+                    clock.currentSession(),
+                    dev.aperture.marketdata.QuoteProvenance.LIVE_REST,
+                    eventTime, now));
+        } catch (RuntimeException e) {
+            log.debug("Event snapshot for {} unavailable: {}", symbol, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private static java.math.BigDecimal orZero(java.math.BigDecimal value) {
+        return value == null ? java.math.BigDecimal.ZERO : value;
+    }
+
     /** Fetches one universe. Returns empty rather than throwing when the vendor refuses. */
     public List<TradableInstrument> fetch(TradableUniverse universe) {
         Optional<DataClient> client = holder.dataClient();

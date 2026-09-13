@@ -207,11 +207,9 @@
         <button type="submit" id="askButton">Ask</button>
       </form>
 
-      <div class="suggestions" id="suggestions">
-        <button type="button" class="chip">Which watchlist name has the widest spread right now?</button>
-        <button type="button" class="chip">Compare NVDA's return unadjusted vs total return.</button>
-        <button type="button" class="chip">Summarise my account and largest position.</button>
-      </div>
+      <!-- Filled in by app.js from the selected account's universe: an events account should
+           not be offered a question about a stock it cannot buy. -->
+      <div class="suggestions" id="suggestions"></div>
 
       <div class="answer" id="answer" hidden>
         <div class="answer-meta" id="answerMeta"></div>

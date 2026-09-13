@@ -15,7 +15,7 @@ Java 21 · Spring Boot 3.5 · H2 + Flyway · Anthropic Java SDK · dependency-fr
 | **Corporate actions** | Splits and cash dividends, with a back-adjustment engine that restates history so a return spanning an ex-date is a real return. Three bases — unadjusted, split-adjusted, total return — selectable per chart. |
 | **Accounts** | The account holder's real Webull accounts across Production and Sandbox, with balances and positions as the broker reports them. |
 | **Tradable universe** | The securities the *selected account* can actually trade, driven by its account class: event contracts, futures, crypto or equities. |
-| **LLM analyst** | Claude with a read-only toolkit over the live services. Answers questions, and **recommends trades** as a market entry plus a resting GTC exit. It cannot place them, structurally. |
+| **LLM analyst** | Claude with a read-only toolkit over the live services. Answers questions — with prompts tailored to what the selected account can trade — and **recommends trades** as a market entry plus a resting GTC exit. It cannot place them, structurally. |
 | **Order submission** | A human can send a recommendation's two legs to the broker. Sandbox freely; production behind a two-condition gate. |
 
 ---
@@ -196,6 +196,26 @@ flattering one would be worse than useless.
 
 It also flags simulated pricing, thin historical samples, and weak hit rates. The entry is the
 **ask**, not the last print, because a market buy lifts the offer.
+
+### Event contracts trade as two instruments
+
+A binary event market is not one instrument with one price. *"Will the Federal Reserve hike by more
+than 25bps in September?"* quotes **YES at 0.02 and NO at 0.99** at the same moment, and the two
+settle in opposite directions. Buying the wrong side is not a rounding error — it is the opposite
+trade at fifty times the price.
+
+So [`EventOutcome`](src/main/java/dev/aperture/instrument/EventOutcome.java) travels with the
+recommendation: the model names the side, the quote is read from that side of the book, and the
+order carries it. Without one, the vendor rejects the order with
+`417 OPENAPI_PARAM_ERR: invalid event_outcome, value: null`; Aperture refuses first, with a reason
+that explains the problem rather than relaying a parameter error. It never defaults to a side —
+`EventOutcome.parse` returns empty rather than guessing, because a silent default here opens a
+position on whichever side happened to be written first.
+
+One further vendor rule, worth knowing because the error message is opaque: an account cannot hold
+opposing open orders on the same event contract
+(`OPENAPI_EVENT_CONTRACT_HAS_OPEN_OPTION_TYPE: There are opening buy no order(s) of this
+contract`).
 
 ### Submitting the orders
 
@@ -393,7 +413,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 146 tests
+mvn test        # 149 tests
 ```
 
 The ones worth reading:
@@ -442,6 +462,9 @@ Stated plainly, because pretending otherwise would be the more serious flaw.
   Aperture polling for it. That is the better shape and is not implemented: the current path polls
   for up to six seconds and, if the entry has not filled, reports that the exit was not placed
   rather than leaving it to chance.
+- **The Ask prompts follow the account's universe.** Offering "compare NVDA unadjusted vs total
+  return" to an events account that cannot buy a share is not just useless, it teaches the wrong
+  thing about what the account does.
 - **Futures can be listed but not analysed.** `getFuturesBars` returns `403
   MARKET_DATA_NOT_SUBSCRIBED` on this entitlement, so no historical odds can be computed for a
   futures contract and the recommender declines to propose one. Equities, crypto and event

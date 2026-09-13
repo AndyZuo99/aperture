@@ -441,3 +441,10 @@ select:disabled { color: var(--text-faint); }
 .submit-result.failed { background: var(--down-soft); color: var(--down); }
 .submit-result .leg { font-family: var(--mono); font-size: 11px; display: block; margin-top: 3px; }
 .submit-result ul { margin: 6px 0 0; padding-left: 16px; }
+
+
+/* The side of a binary event contract. YES and NO are opposite trades at different prices, so
+   the badge is never ambiguous about which one a recommendation is. */
+.outcome { font-size: 10px; font-weight: 700; letter-spacing: .5px; padding: 2px 7px; border-radius: 3px; }
+.outcome-YES { background: var(--up-soft); color: var(--up); }
+.outcome-NO  { background: var(--down-soft); color: var(--down); }
