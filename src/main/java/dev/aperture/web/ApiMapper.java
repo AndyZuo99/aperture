@@ -13,6 +13,8 @@ import dev.aperture.marketdata.Bar;
 import dev.aperture.marketdata.FeedStatus;
 import dev.aperture.marketdata.MarketDepth;
 import dev.aperture.marketdata.Quote;
+import dev.aperture.trading.OrderMetrics;
+import dev.aperture.trading.OrderRecord;
 import dev.aperture.ai.AnalysisResult;
 import dev.aperture.ai.OrderLeg;
 import dev.aperture.ai.RecommendationSet;
@@ -149,6 +151,68 @@ public class ApiMapper {
                 views,
                 balance.isAvailable(),
                 balance.asOf().toString());
+    }
+
+    public ApiDtos.OrderHistoryView toOrderHistoryView(BrokerAccount account,
+                                                       List<OrderRecord> orders,
+                                                       boolean connected,
+                                                       String note) {
+        return new ApiDtos.OrderHistoryView(
+                account.accountId(),
+                account.displayName(),
+                account.environment().label(),
+                connected,
+                note,
+                toOrderMetricsView(OrderMetrics.of(orders)),
+                orders.stream().map(ApiMapper::toOrderView).toList());
+    }
+
+    private static ApiDtos.OrderView toOrderView(OrderRecord order) {
+        return new ApiDtos.OrderView(
+                order.orderId(),
+                order.symbol(),
+                order.instrumentType(),
+                order.eventOutcome().orElse(null),
+                order.side(),
+                order.orderType(),
+                order.timeInForce(),
+                order.status().name(),
+                order.status().label(),
+                order.status().isOpen(),
+                order.isRestingExit(),
+                order.totalQuantity().toDisplay(),
+                order.filledQuantity().toDisplay(),
+                order.remainingQuantity().toDisplay(),
+                order.fillRatePercent(),
+                order.limitPrice().map(Price::toDisplay).orElse(null),
+                order.stopPrice().map(Price::toDisplay).orElse(null),
+                order.filledPrice().map(Price::toDisplay).orElse(null),
+                order.filledNotional().map(Money::toDisplay).orElse(null),
+                order.priceImprovement().map(Money::amount).orElse(null),
+                order.priceImprovementPercent().orElse(null),
+                order.timeToFill().map(java.time.Duration::toMillis).orElse(null),
+                order.totalCost().isZero() ? null : order.totalCost().toDisplay(),
+                order.placedAt().toString(),
+                order.filledAt().map(Instant::toString).orElse(null));
+    }
+
+    private static ApiDtos.OrderMetricsView toOrderMetricsView(OrderMetrics metrics) {
+        return new ApiDtos.OrderMetricsView(
+                metrics.totalOrders(),
+                metrics.filled(),
+                metrics.partiallyFilled(),
+                metrics.working(),
+                metrics.cancelled(),
+                metrics.rejected(),
+                metrics.restingExits(),
+                metrics.distinctSymbols(),
+                metrics.ordersWithFills(),
+                metrics.filledOrderPercent(),
+                metrics.filledNotional().toDisplay(),
+                metrics.totalCost().toDisplay(),
+                metrics.averageTimeToFill().map(java.time.Duration::toMillis).orElse(null),
+                metrics.averagePriceImprovementPercent().orElse(null),
+                metrics.totalPriceImprovement().toDisplay());
     }
 
     public ApiDtos.DepthView toDepthView(String symbol, MarketDepth depth, String note) {

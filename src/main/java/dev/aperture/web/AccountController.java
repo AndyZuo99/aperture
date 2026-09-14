@@ -4,6 +4,7 @@ import dev.aperture.account.AccountService;
 import dev.aperture.account.BrokerAccount;
 import dev.aperture.account.TradingEnvironment;
 import dev.aperture.marketdata.WebullClientHolder;
+import dev.aperture.trading.OrderHistoryService;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -27,11 +28,14 @@ public class AccountController {
 
     private final AccountService accounts;
     private final WebullClientHolder holder;
+    private final OrderHistoryService orderHistory;
     private final ApiMapper mapper;
 
-    public AccountController(AccountService accounts, WebullClientHolder holder, ApiMapper mapper) {
+    public AccountController(AccountService accounts, WebullClientHolder holder,
+                             OrderHistoryService orderHistory, ApiMapper mapper) {
         this.accounts = accounts;
         this.holder = holder;
+        this.orderHistory = orderHistory;
         this.mapper = mapper;
     }
 
@@ -59,6 +63,29 @@ public class AccountController {
         return accounts.findAccount(target, accountId)
                 .map(account -> ResponseEntity.ok(mapper.toAccountDetailView(
                         account, accounts.balance(account), accounts.positions(account))))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Order history and execution metrics for one account, in either environment.
+     *
+     * <p>Per account rather than per environment: the vendor rate-limits, and asking for five
+     * accounts in a row returns {@code Too many requests}. The panel only ever shows the selected
+     * account, so only that account is fetched.
+     */
+    @GetMapping("/{environment}/{accountId}/orders")
+    public ResponseEntity<ApiDtos.OrderHistoryView> orders(@PathVariable String environment,
+                                                           @PathVariable String accountId) {
+        TradingEnvironment target = TradingEnvironment.parseOrSandbox(environment);
+        return accounts.findAccount(target, accountId)
+                .map(account -> {
+                    boolean connected = holder.tradeClient(target).isPresent();
+                    return ResponseEntity.ok(mapper.toOrderHistoryView(
+                            account, orderHistory.orders(account), connected,
+                            connected ? "" : "Not connected to " + target.label()
+                                    + ": " + holder.unavailableReason(target)
+                                            .orElse("no trading client")));
+                })
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 

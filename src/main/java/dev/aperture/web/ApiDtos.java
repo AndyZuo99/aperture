@@ -188,6 +188,71 @@ public final class ApiDtos {
             String asOf) {
     }
 
+    /**
+     * One order plus the metrics derived from it.
+     *
+     * <p>Derived figures are nullable rather than zero: a market order has no price improvement
+     * and a cancelled order has no fill time, and zero would read as "no improvement" and
+     * "instant" respectively.
+     */
+    public record OrderView(
+            String orderId,
+            String symbol,
+            String instrumentType,
+            String eventOutcome,
+            String side,
+            String orderType,
+            String timeInForce,
+            String status,
+            String statusLabel,
+            boolean open,
+            boolean restingExit,
+            BigDecimal totalQuantity,
+            BigDecimal filledQuantity,
+            BigDecimal remainingQuantity,
+            BigDecimal fillRatePercent,
+            BigDecimal limitPrice,
+            BigDecimal stopPrice,
+            BigDecimal filledPrice,
+            BigDecimal filledNotional,
+            BigDecimal priceImprovement,
+            BigDecimal priceImprovementPercent,
+            Long timeToFillMillis,
+            BigDecimal cost,
+            String placedAt,
+            String filledAt) {
+    }
+
+    /** Execution quality across an account's orders. */
+    public record OrderMetricsView(
+            int totalOrders,
+            int filled,
+            int partiallyFilled,
+            int working,
+            int cancelled,
+            int rejected,
+            int restingExits,
+            int distinctSymbols,
+            int ordersWithFills,
+            BigDecimal filledOrderPercent,
+            BigDecimal filledNotional,
+            BigDecimal totalCost,
+            Long averageTimeToFillMillis,
+            BigDecimal averagePriceImprovementPercent,
+            BigDecimal totalPriceImprovement) {
+    }
+
+    /** The order-history panel: the account it belongs to, its orders, and their metrics. */
+    public record OrderHistoryView(
+            String accountId,
+            String accountLabel,
+            String environment,
+            boolean connected,
+            String note,
+            OrderMetricsView metrics,
+            List<OrderView> orders) {
+    }
+
     public record PositionView(
             String symbol,
             String name,

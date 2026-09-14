@@ -33,6 +33,7 @@ const state = {
   historyRequest: 0,
   quotesRequest: 0,
   searchRequest: 0,
+  ordersRequest: 0,
   chartUniverse: 'EQUITY',   // the universe the charted symbol belongs to
   chartMode: 'historical',   // 'historical' shows a window of sessions, 'live' shows today
   chartRange: '1Y',
@@ -726,6 +727,7 @@ function applyEnvironment() {
       (env && env.unavailableReason) ? env.unavailableReason : 'No accounts in this environment';
     $('balances').innerHTML = '';
     $('positionBody').innerHTML = '<tr class="empty"><td colspan="6">No account selected.</td></tr>';
+    loadOrders();
     loadUniverse();
     return;
   }
@@ -740,6 +742,7 @@ function applyEnvironment() {
   state.accountId = env.accounts[0].accountId;
   select.value = state.accountId;
   loadAccountDetail();
+  loadOrders();
   // The account class decides the universe, so a change of account changes the instrument set.
   state.universeGroup = '';
   applyUniverse(env.accounts[0]);
@@ -813,6 +816,146 @@ async function loadAccountDetail() {
   } catch (e) {
     $('accountHint').textContent = 'Could not load account';
   }
+}
+
+/* ── order history ───────────────────────────────────────────────── */
+
+const ORDER_STATUS_CLASS = {
+  FILLED: 'status-filled',
+  PARTIALLY_FILLED: 'status-partial',
+  WORKING: 'status-working',
+  CANCELLED: 'status-cancelled',
+  REJECTED: 'status-rejected',
+  UNKNOWN: 'status-unknown',
+};
+
+/** A fill duration a human can read. Most fills are sub-second, so "0s" would be a lie. */
+function fillDuration(millis) {
+  if (millis === null || millis === undefined) return '—';
+  if (millis < 1000) return millis + 'ms';
+  if (millis < 60000) return (millis / 1000).toFixed(1) + 's';
+  const minutes = Math.floor(millis / 60000);
+  const seconds = Math.round((millis % 60000) / 1000);
+  return minutes + 'm ' + (seconds ? seconds + 's' : '');
+}
+
+/** Date and time in exchange time, which is the only clock an order log should be read in. */
+function orderTime(iso) {
+  if (!iso) return '—';
+  // Numeric and compact: this is the last of thirteen columns, and "Sep 11, 18:33" is the one
+  // that pushes the row past the panel.
+  const date = new Date(iso);
+  return date.toLocaleString('en-US', {
+    timeZone: 'America/New_York', hour12: false,
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).replace(',', '');
+}
+
+async function loadOrders() {
+  if (!state.accountId) {
+    $('orderBody').innerHTML =
+      '<tr class="empty"><td colspan="13">No account selected.</td></tr>';
+    clearOrderMetrics();
+    return;
+  }
+  const requestId = ++state.ordersRequest;
+  try {
+    const history = await getJson(
+      `/api/accounts/${state.environment}/${encodeURIComponent(state.accountId)}/orders`);
+    // Accounts differ wildly in how many orders they have, and switching between them fires
+    // faster than the vendor answers.
+    if (requestId !== state.ordersRequest) return;
+    if (!history) {
+      clearOrderMetrics();
+      $('orderBody').innerHTML =
+        '<tr class="empty"><td colspan="13">No orders for this account.</td></tr>';
+      return;
+    }
+
+    renderOrderMetrics(history.metrics);
+    $('ordersNote').hidden = !history.note;
+    if (history.note) $('ordersNote').textContent = history.note;
+    $('ordersHint').textContent = history.metrics.totalOrders
+      ? `${history.metrics.totalOrders} order${history.metrics.totalOrders === 1 ? '' : 's'} · ${history.environment}`
+      : history.environment;
+
+    const body = $('orderBody');
+    if (!history.orders.length) {
+      body.innerHTML = history.connected
+        ? '<tr class="empty"><td colspan="13">No orders for this account.</td></tr>'
+        : '<tr class="empty"><td colspan="13">Not connected to this environment.</td></tr>';
+      return;
+    }
+    body.innerHTML = history.orders.map(renderOrderRow).join('');
+  } catch (e) {
+    if (requestId !== state.ordersRequest) return;
+    $('ordersHint').textContent = 'Could not load orders';
+  }
+}
+
+function renderOrderRow(order) {
+  const statusClass = ORDER_STATUS_CLASS[order.status] || 'status-unknown';
+  const sideClass = order.side === 'BUY' ? 'side-buy' : 'side-sell';
+  // Event contracts trade as two instruments; without the outcome the row is ambiguous.
+  const outcome = order.eventOutcome
+    ? `<span class="outcome-tag">${order.eventOutcome}</span>` : '';
+
+  const improvement = order.priceImprovement === null || order.priceImprovement === undefined
+    ? '—'
+    : `<span class="${signClass(order.priceImprovement)}">${signed(order.priceImprovement)}` +
+      (order.priceImprovementPercent !== null && order.priceImprovementPercent !== undefined
+        ? ` (${signed(order.priceImprovementPercent)}%)` : '') + '</span>';
+
+  return `
+    <tr class="${order.restingExit ? 'is-resting' : ''}"
+        title="${order.restingExit ? 'Resting GTC exit — this position has a live exit order' : ''}">
+      <td class="sym">${order.symbol}${outcome}</td>
+      <td class="${sideClass}">${order.side}</td>
+      <td>${order.orderType}</td>
+      <td>${order.timeInForce}</td>
+      <td><span class="order-status ${statusClass}">${order.statusLabel}</span></td>
+      <td class="num">${order.totalQuantity}</td>
+      <td class="num">${order.filledQuantity} <span class="stat-label">${order.fillRatePercent}%</span></td>
+      <td class="num">${order.limitPrice === undefined ? '—' : money(order.limitPrice)}</td>
+      <td class="num">${order.filledPrice === undefined ? '—' : money(order.filledPrice)}</td>
+      <td class="num">${improvement}</td>
+      <td class="num">${order.filledNotional === undefined ? '—' : money(order.filledNotional)}</td>
+      <td class="num">${fillDuration(order.timeToFillMillis)}</td>
+      <td class="num">${orderTime(order.placedAt)}</td>
+    </tr>`;
+}
+
+function renderOrderMetrics(metrics) {
+  $('omTotal').textContent = metrics.totalOrders;
+  $('omFilled').innerHTML =
+    `${metrics.filled}<span class="stat-label"> · ${metrics.filledOrderPercent}%</span>` +
+    (metrics.partiallyFilled ? `<span class="stat-label"> +${metrics.partiallyFilled} partial</span>` : '');
+  $('omWorking').textContent = metrics.working;
+  $('omCancelled').textContent = metrics.cancelled;
+  $('omRejected').innerHTML = metrics.rejected
+    ? `<span class="down">${metrics.rejected}</span>` : '0';
+  $('omNotional').textContent = money(metrics.filledNotional);
+  $('omFillTime').textContent = fillDuration(metrics.averageTimeToFillMillis);
+  // Positive is money saved against the limits that were set — the figure that says whether the
+  // prices being asked for were realistic.
+  $('omImprovement').innerHTML = metrics.ordersWithFills
+    ? `<span class="${signClass(metrics.totalPriceImprovement)}">${signed(metrics.totalPriceImprovement)}</span>` +
+      (metrics.averagePriceImprovementPercent !== null
+        && metrics.averagePriceImprovementPercent !== undefined
+        ? `<span class="stat-label"> · ${signed(metrics.averagePriceImprovementPercent)}% avg</span>` : '')
+    : '—';
+  $('omCost').textContent = money(metrics.totalCost);
+  $('omResting').innerHTML = metrics.restingExits
+    ? `<span class="up">${metrics.restingExits}</span>` : '0';
+}
+
+function clearOrderMetrics() {
+  ['omTotal', 'omFilled', 'omWorking', 'omCancelled', 'omRejected', 'omNotional',
+    'omFillTime', 'omImprovement', 'omCost', 'omResting'].forEach((id) => {
+      $(id).textContent = '—';
+    });
+  $('ordersHint').textContent = '';
+  $('ordersNote').hidden = true;
 }
 
 /* ── corporate actions ───────────────────────────────────────────── */
@@ -1276,6 +1419,12 @@ async function submitRecommendation(symbol, button) {
       eventOutcome: rec.eventOutcome || null,
     });
     renderSubmission(box, result);
+    // The order log is the record of what was just done, so it should not lag behind the card
+    // that says it happened. The account's cash and positions move with it.
+    if (result.accepted) {
+      loadOrders();
+      loadAccountDetail();
+    }
   } catch (e) {
     box.className = 'submit-result failed';
     box.textContent = 'Request failed: ' + e.message;
@@ -1322,6 +1471,7 @@ function wireEvents() {
     const account = env && env.accounts.find((a) => a.accountId === state.accountId);
     applyUniverse(account);
     loadAccountDetail();
+    loadOrders();
     loadUniverse();
   });
 
@@ -1439,6 +1589,7 @@ function start() {
   setInterval(refreshStatus, 5000);
   setInterval(loadQuotes, 15000);
   setInterval(loadAccountDetail, 20000);
+  setInterval(loadOrders, 20000);
   setInterval(loadActions, 120000);
 }
 

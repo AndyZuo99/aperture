@@ -194,6 +194,56 @@
     </div>
   </section>
 
+  <!-- ── Order history ─────────────────────────────────────────── -->
+  <!-- Follows the selected account in whichever environment it belongs to. The metrics strip is
+       the point: a list of rows is a receipt, the derived figures are a review of execution. -->
+  <section class="panel orders-panel">
+    <div class="panel-head">
+      <h2>Order history</h2>
+      <span class="hint" id="ordersHint"></span>
+    </div>
+
+    <div class="order-metrics" id="orderMetrics">
+      <span class="stat"><span class="stat-label">Orders</span> <span id="omTotal">—</span></span>
+      <span class="stat"><span class="stat-label">Filled</span> <span id="omFilled">—</span></span>
+      <span class="stat"><span class="stat-label">Working</span> <span id="omWorking">—</span></span>
+      <span class="stat"><span class="stat-label">Cancelled</span> <span id="omCancelled">—</span></span>
+      <span class="stat"><span class="stat-label">Rejected</span> <span id="omRejected">—</span></span>
+      <span class="stat"><span class="stat-label">Filled notional</span> <span id="omNotional">—</span></span>
+      <span class="stat"><span class="stat-label">Avg fill time</span> <span id="omFillTime">—</span></span>
+      <span class="stat"><span class="stat-label">Price improvement</span> <span id="omImprovement">—</span></span>
+      <span class="stat"><span class="stat-label">Commission &amp; fees</span> <span id="omCost">—</span></span>
+      <span class="stat"><span class="stat-label">Resting exits</span> <span id="omResting">—</span></span>
+    </div>
+
+    <p class="note" id="ordersNote" hidden></p>
+
+    <div class="table-scroll">
+      <table class="grid" id="orderGrid">
+        <thead>
+          <tr>
+            <th class="sym">Symbol</th>
+            <th>Side</th>
+            <th>Type</th>
+            <th>TIF</th>
+            <th>Status</th>
+            <th class="num">Qty</th>
+            <th class="num">Fill</th>
+            <th class="num">Limit</th>
+            <th class="num">Avg fill</th>
+            <th class="num" title="Positive is in your favour: a buy below its limit, a sell above it">Improvement</th>
+            <th class="num">Notional</th>
+            <th class="num">Time to fill</th>
+            <th class="num">Placed</th>
+          </tr>
+        </thead>
+        <tbody id="orderBody">
+          <tr class="empty"><td colspan="13">No orders for this account.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- ── Tradable universe ─────────────────────────────────────── -->
   <!-- What the SELECTED account can actually trade. A futures account cannot buy equities, so
        this section is driven by the account's class rather than by the watchlist. -->

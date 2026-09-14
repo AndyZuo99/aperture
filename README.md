@@ -91,6 +91,54 @@ from both API access and any subscription bought in the Webull app. This was bui
 
 ---
 
+## Order history
+
+Every account, in both environments, shows its own order log with the metrics the vendor does not
+calculate. A list of rows is a receipt; the derived figures are what make it a review of execution.
+
+Per order: fill rate, remaining quantity, filled notional, time to fill, and **price improvement** —
+how much better than the limit the order actually executed.
+
+| | Population | Why it is drawn that way |
+|---|---|---|
+| **Fill rate** | All orders | Cancelled orders count against it; they were intentions that did not happen |
+| **Filled notional** | Orders that traded | Capital that actually moved, not the sizes that were asked for |
+| **Avg fill time** | Orders that filled | Counting cancelled orders as zero would make execution look instant |
+| **Price improvement** | Orders with a limit | A market order has no limit to have beaten |
+
+**Price improvement inverts with the side.** A buy filled *below* its limit and a sell filled
+*above* it are both good, so positive always means in the trader's favour. A single signed "filled
+minus limit" would report one of two identical outcomes as a loss purely because of its direction.
+On the live account: 55 MRK asked at 145.19 and filled at 144.33 is +0.86 a share, +$47.30 on the
+order.
+
+**Resting exits are counted and flagged.** An open GTC sell is what makes a filled entry a *managed*
+position rather than an open-ended one, and its absence is invisible in a positions panel — the
+position looks identical either way. The production Individual Margin account shows four working
+GTC sells against three fills, so the two-leg plans are intact; a count lower than the fills is the
+thing to notice.
+
+### What the vendor's API actually does here
+
+- `listOrders` has two forms and the five-argument one is **deprecated**. The four-argument form is
+  `(accountId, startTime, endTime, paginationKey)` — the second argument is *start_time*, not a page
+  size, which matters because it looks exactly like one: passing `20` fails with
+  `invalid start_time, value: 20`.
+- **No `start_time` format was accepted.** `2026-09-01`, `2026-09-01T00:00:00Z`, `20260901` and
+  epoch milliseconds were all rejected as invalid, so the window is left unset — which the vendor
+  accepts and which returns the account's orders.
+- **`getQuantity()` is deprecated and returns null** on every order the live API has returned. The
+  order's size is in `getTotalQuantity()`. A panel built on the obvious getter shows every order as
+  having no size.
+- **Timestamps arrive twice**, as epoch milliseconds *in a string* and as an ISO instant. The ISO
+  one is used, with the other as a fallback.
+- **Rate limits are real.** Iterating five accounts back to back returns `Too many requests`, so
+  each account is cached briefly and fetched only when its own panel asks — the panel only ever
+  shows the selected account.
+
+Fill times are reported in milliseconds, because most fills are sub-second: the production market
+orders filled in 39ms and 33ms, and in seconds both would read `0s`.
+
 ## The tradable universe
 
 A Webull account is not a general-purpose brokerage account. An Events account trades event
@@ -563,7 +611,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 214 tests
+mvn test        # 248 tests
 ```
 
 The ones worth reading:
@@ -609,6 +657,16 @@ The ones worth reading:
 - [`RunContextTest`](src/test/java/dev/aperture/ai/RunContextTest.java) — that an omitted
   `accountId` resolves to the account the run is actually about, and that an explicitly named one
   still wins.
+- [`OrderRecordTest`](src/test/java/dev/aperture/trading/OrderRecordTest.java) — that price
+  improvement inverts with the side, so a sell filled above its limit is a gain and not a loss;
+  that a market order has none at all rather than reporting its whole fill price as improvement;
+  and that a partial fill's notional is what traded, not what was asked for.
+- [`OrderMetricsTest`](src/test/java/dev/aperture/trading/OrderMetricsTest.java) — that each
+  average runs over the right population: fill time over filled orders only, improvement over
+  orders that had a limit to beat.
+- [`OrderStatusTest`](src/test/java/dev/aperture/trading/OrderStatusTest.java) — that an
+  unrecognised vendor status becomes `UNKNOWN` rather than being guessed into `FILLED`, and that a
+  partial fill is not counted as a fill.
 
 ---
 
