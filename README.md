@@ -118,15 +118,43 @@ position looks identical either way. The production Individual Margin account sh
 GTC sells against three fills, so the two-leg plans are intact; a count lower than the fills is the
 thing to notice.
 
-### What the vendor's API actually does here
+The panel shows the account's **whole** history, which took some finding.
+
+### Getting the whole history out of the API
+
+Leaving the time window unset is accepted by the vendor and looks like it works. It is not "all
+orders" — it is a short recent lookback. On the production margin account that was **7 orders back
+six days**, while the same account asked for an explicit window returns **63, back a full year**.
+An order log that silently drops the first 56 orders is worse than no order log, and nothing in the
+response says it is truncated: the pagination key comes back null, which reads as "that's all of
+them".
+
+Two things have to be true at once, and each alone still fails:
+
+- The format is `yyyy-MM-dd'T'HH:mm:ss`. `2026-09-01`, `2026-09-01T00:00:00Z`,
+  `2026-09-01T00:00:00.000+0000`, `20260901`, epoch seconds and epoch milliseconds are all rejected.
+- **`end_time` is required whenever `start_time` is given.** This is what makes the format hunt so
+  misleading — a *valid* start with a missing end reports `invalid start_time,end_time`, naming the
+  start first, so a correct format reads exactly like a rejected one. Two formats had in fact been
+  accepted several attempts before this was spotted.
+
+The window is therefore opened wide rather than left unset: a fixed floor of 2000-01-01, so "all
+time" does not quietly become "the last N years" as the app keeps running, and an end a day ahead
+of now because the window's timezone is undocumented and an end of *now* in the wrong zone would
+drop the orders placed today. The vendor accepts it — asking from 2015 returns the same 63 orders,
+and a window ending before the oldest of them returns zero, so the one-year reach is where that
+account's history actually starts rather than a cap being hit.
+
+The panel states the span it actually got — `63 orders since 09/18/2025` — rather than claiming
+"all time", for the same reason the 5Y chart prints its real first date: an account opened last
+month has a month of history however wide the window asked for was.
+
+### What else the vendor's API does here
 
 - `listOrders` has two forms and the five-argument one is **deprecated**. The four-argument form is
   `(accountId, startTime, endTime, paginationKey)` — the second argument is *start_time*, not a page
   size, which matters because it looks exactly like one: passing `20` fails with
   `invalid start_time, value: 20`.
-- **No `start_time` format was accepted.** `2026-09-01`, `2026-09-01T00:00:00Z`, `20260901` and
-  epoch milliseconds were all rejected as invalid, so the window is left unset — which the vendor
-  accepts and which returns the account's orders.
 - **`getQuantity()` is deprecated and returns null** on every order the live API has returned. The
   order's size is in `getTotalQuantity()`. A panel built on the obvious getter shows every order as
   having no size.
@@ -611,7 +639,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 248 tests
+mvn test        # 253 tests
 ```
 
 The ones worth reading:
@@ -667,6 +695,10 @@ The ones worth reading:
 - [`OrderStatusTest`](src/test/java/dev/aperture/trading/OrderStatusTest.java) — that an
   unrecognised vendor status becomes `UNKNOWN` rather than being guessed into `FILLED`, and that a
   partial fill is not counted as a fill.
+- [`OrderHistoryWindowTest`](src/test/java/dev/aperture/trading/OrderHistoryWindowTest.java) — that
+  an explicit window with **both** ends is always sent, since the silent failure is a log that
+  quietly shows a fraction of the account's orders. Also that every page is followed, and that a
+  repeating pagination key ends the walk instead of collecting the same page a hundred times.
 
 ---
 

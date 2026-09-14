@@ -15,12 +15,17 @@ import dev.aperture.time.MarketClock;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,10 +41,31 @@ import org.springframework.stereotype.Service;
  * <em>start_time</em>, not a page size, which is worth stating because it looks exactly like one
  * and passing {@code 20} fails with {@code invalid start_time, value: 20}.
  *
- * <p>No date format was accepted for {@code start_time} on the live API - {@code 2026-09-01},
- * {@code 2026-09-01T00:00:00Z}, {@code 20260901} and epoch milliseconds were all rejected as
- * invalid - so the window is left unset, which the vendor accepts and which returns the account's
- * orders. Pagination is followed through {@code paginationKey} until it comes back empty.
+ * <h2>Getting the whole history out of it</h2>
+ *
+ * <p>Left unset, the window is not "everything" - it is a short recent lookback. On the live
+ * account that was seven orders back to six days ago, while the same account asked for an explicit
+ * window returned <em>sixty-three</em>, back a full year. An order log that silently drops the
+ * first fifty-six orders is worse than no order log.
+ *
+ * <p>Two things had to be true at once, and each alone still fails:
+ *
+ * <ul>
+ *   <li>The format is {@code yyyy-MM-dd'T'HH:mm:ss}. {@code 2026-09-01},
+ *       {@code 2026-09-01T00:00:00Z}, {@code 20260901}, epoch seconds and epoch milliseconds are
+ *       all rejected as invalid.
+ *   <li>{@code end_time} is <strong>required</strong> whenever {@code start_time} is given. This
+ *       is what makes the format hunt so misleading: a valid start with a missing end reports
+ *       {@code invalid start_time,end_time} - naming the start first - so a correct format reads
+ *       exactly like a rejected one.
+ * </ul>
+ *
+ * <p>The window is therefore opened wide rather than left unset. {@link #HISTORY_EPOCH} predates
+ * any Webull account, and the vendor accepts it: asking from 2015 returns the same sixty-three
+ * orders, and a window ending before the oldest of them returns zero - so the one-year reach is
+ * where that account's history actually starts, not a cap being hit.
+ *
+ * <p>Pagination is followed through {@code paginationKey} until it comes back empty.
  *
  * <h2>Rate limits are real here</h2>
  *
@@ -56,7 +82,19 @@ public class OrderHistoryService {
     private static final Duration CACHE_TTL = Duration.ofSeconds(10);
 
     /** Pages to follow before stopping. A guard against an endpoint that never stops paging. */
-    private static final int MAX_PAGES = 10;
+    private static final int MAX_PAGES = 100;
+
+    /**
+     * The start of the requested window: earlier than any Webull account can have traded.
+     *
+     * <p>A fixed floor rather than a rolling lookback, so "all time" does not quietly become
+     * "the last N years" as the app keeps running.
+     */
+    private static final LocalDateTime HISTORY_EPOCH = LocalDateTime.of(2000, 1, 1, 0, 0, 0);
+
+    /** The format the vendor accepts. Every other spelling tried was rejected outright. */
+    private static final DateTimeFormatter WINDOW_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private final WebullClientHolder holder;
     private final MarketClock clock;
@@ -94,10 +132,17 @@ public class OrderHistoryService {
 
     private List<OrderRecord> fetchAllPages(TradeClientV3 client, String accountId) {
         List<OrderRecord> orders = new ArrayList<>();
+        // End a day ahead: the window's timezone is not documented, and an end of "now" in the
+        // wrong zone would cut off the orders placed today - the ones most worth seeing.
+        String from = WINDOW_FORMAT.format(HISTORY_EPOCH);
+        String to = WINDOW_FORMAT.format(
+                LocalDateTime.ofInstant(clock.now(), ZoneOffset.UTC).plusDays(1));
+
         String paginationKey = null;
+        Set<String> seenKeys = new HashSet<>();
         for (int page = 0; page < MAX_PAGES; page++) {
             PaginatedResult<OrderHistory> result =
-                    client.listOrders(accountId, null, null, paginationKey);
+                    client.listOrders(accountId, from, to, paginationKey);
             if (result == null || result.getData() == null || result.getData().isEmpty()) {
                 break;
             }
@@ -113,6 +158,13 @@ public class OrderHistoryService {
             }
             paginationKey = result.getPaginationKey();
             if (paginationKey == null || paginationKey.isBlank()) {
+                break;
+            }
+            // A key that repeats means the endpoint is handing back the same page. Without this
+            // the loop would run to MAX_PAGES collecting duplicates of it.
+            if (!seenKeys.add(paginationKey)) {
+                log.warn("Order history for {} repeated pagination key; stopping at {} order(s)",
+                        accountId, orders.size());
                 break;
             }
         }

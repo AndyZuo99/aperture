@@ -829,14 +829,30 @@ const ORDER_STATUS_CLASS = {
   UNKNOWN: 'status-unknown',
 };
 
-/** A fill duration a human can read. Most fills are sub-second, so "0s" would be a lie. */
+/**
+ * A fill duration a human can read, across the five orders of magnitude these actually span.
+ *
+ * <p>A market order fills in tens of milliseconds and a resting GTC order can fill days later, so
+ * neither seconds nor minutes works alone: seconds renders a 39ms fill as "0s", and minutes
+ * renders a two-day fill as "2485m 58s".
+ */
 function fillDuration(millis) {
   if (millis === null || millis === undefined) return '—';
   if (millis < 1000) return millis + 'ms';
   if (millis < 60000) return (millis / 1000).toFixed(1) + 's';
-  const minutes = Math.floor(millis / 60000);
-  const seconds = Math.round((millis % 60000) / 1000);
-  return minutes + 'm ' + (seconds ? seconds + 's' : '');
+  if (millis < 3600000) {
+    const minutes = Math.floor(millis / 60000);
+    const seconds = Math.round((millis % 60000) / 1000);
+    return minutes + 'm' + (seconds ? ' ' + seconds + 's' : '');
+  }
+  if (millis < 86400000) {
+    const hours = Math.floor(millis / 3600000);
+    const minutes = Math.round((millis % 3600000) / 60000);
+    return hours + 'h' + (minutes ? ' ' + minutes + 'm' : '');
+  }
+  const days = Math.floor(millis / 86400000);
+  const hours = Math.round((millis % 86400000) / 3600000);
+  return days + 'd' + (hours ? ' ' + hours + 'h' : '');
 }
 
 /** Date and time in exchange time, which is the only clock an order log should be read in. */
@@ -851,10 +867,18 @@ function orderTime(iso) {
   }).replace(',', '');
 }
 
+/** Just the date, with the year: history spans years, so "since 09/18" is ambiguous. */
+function orderDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', month: '2-digit', day: '2-digit', year: 'numeric',
+  });
+}
+
 async function loadOrders() {
   if (!state.accountId) {
     $('orderBody').innerHTML =
-      '<tr class="empty"><td colspan="13">No account selected.</td></tr>';
+      '<tr class="empty"><td colspan="10">No account selected.</td></tr>';
     clearOrderMetrics();
     return;
   }
@@ -868,22 +892,27 @@ async function loadOrders() {
     if (!history) {
       clearOrderMetrics();
       $('orderBody').innerHTML =
-        '<tr class="empty"><td colspan="13">No orders for this account.</td></tr>';
+        '<tr class="empty"><td colspan="10">No orders for this account.</td></tr>';
       return;
     }
 
     renderOrderMetrics(history.metrics);
     $('ordersNote').hidden = !history.note;
     if (history.note) $('ordersNote').textContent = history.note;
+    // The span actually delivered, not a claim of "all time": an account that opened last month
+    // has a month of history however wide the window asked for was.
+    const oldest = history.orders.length
+      ? history.orders[history.orders.length - 1].placedAt : null;
     $('ordersHint').textContent = history.metrics.totalOrders
-      ? `${history.metrics.totalOrders} order${history.metrics.totalOrders === 1 ? '' : 's'} · ${history.environment}`
+      ? `${history.metrics.totalOrders} order${history.metrics.totalOrders === 1 ? '' : 's'}` +
+        (oldest ? ` since ${orderDate(oldest)}` : '') + ` · ${history.environment}`
       : history.environment;
 
     const body = $('orderBody');
     if (!history.orders.length) {
       body.innerHTML = history.connected
-        ? '<tr class="empty"><td colspan="13">No orders for this account.</td></tr>'
-        : '<tr class="empty"><td colspan="13">Not connected to this environment.</td></tr>';
+        ? '<tr class="empty"><td colspan="10">No orders for this account.</td></tr>'
+        : '<tr class="empty"><td colspan="10">Not connected to this environment.</td></tr>';
       return;
     }
     body.innerHTML = history.orders.map(renderOrderRow).join('');
@@ -906,18 +935,22 @@ function renderOrderRow(order) {
       (order.priceImprovementPercent !== null && order.priceImprovementPercent !== undefined
         ? ` (${signed(order.priceImprovementPercent)}%)` : '') + '</span>';
 
+  // What was asked for and what was got, read together. A market order has no limit, so the
+  // arrow would point from nothing.
+  const limit = order.limitPrice === undefined ? null : money(order.limitPrice);
+  const fill = order.filledPrice === undefined ? null : money(order.filledPrice);
+  const prices = limit && fill ? `${limit}<span class="fill-arrow">→</span>${fill}`
+    : (fill || limit || '—');
+
   return `
     <tr class="${order.restingExit ? 'is-resting' : ''}"
         title="${order.restingExit ? 'Resting GTC exit — this position has a live exit order' : ''}">
       <td class="sym">${order.symbol}${outcome}</td>
       <td class="${sideClass}">${order.side}</td>
-      <td>${order.orderType}</td>
-      <td>${order.timeInForce}</td>
+      <td>${order.orderType}<span class="pair"> · ${order.timeInForce}</span></td>
       <td><span class="order-status ${statusClass}">${order.statusLabel}</span></td>
-      <td class="num">${order.totalQuantity}</td>
-      <td class="num">${order.filledQuantity} <span class="stat-label">${order.fillRatePercent}%</span></td>
-      <td class="num">${order.limitPrice === undefined ? '—' : money(order.limitPrice)}</td>
-      <td class="num">${order.filledPrice === undefined ? '—' : money(order.filledPrice)}</td>
+      <td class="num">${order.filledQuantity}<span class="pair">/${order.totalQuantity}</span></td>
+      <td class="num">${prices}</td>
       <td class="num">${improvement}</td>
       <td class="num">${order.filledNotional === undefined ? '—' : money(order.filledNotional)}</td>
       <td class="num">${fillDuration(order.timeToFillMillis)}</td>

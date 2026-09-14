@@ -125,8 +125,7 @@ select:disabled { color: var(--text-faint); }
   grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
   grid-template-areas:
     "watchlist chart"
-    "watchlist account"
-    "orders    orders"
+    "orders    account"
     "universe  universe"
     "actions   analyst";
   gap: 12px;
@@ -149,8 +148,7 @@ select:disabled { color: var(--text-faint); }
 body.no-corporate-actions .layout {
   grid-template-areas:
     "watchlist chart"
-    "watchlist account"
-    "orders    orders"
+    "orders    account"
     "universe  universe"
     "analyst   analyst";
 }
@@ -247,7 +245,9 @@ body.no-corporate-actions .layout {
 
 /* ── Account ───────────────────────────────────────────────────── */
 
-.balances { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 1px; background: var(--border-soft); border-bottom: 1px solid var(--border-soft); }
+/* 96px rather than 115: the account panel shares its row with the order history now, and at
+   115 the fifth balance wrapped onto a line of its own with three empty cells beside it. */
+.balances { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 1px; background: var(--border-soft); border-bottom: 1px solid var(--border-soft); }
 .balance { background: var(--bg-panel); padding: 9px 12px; }
 .balance-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-faint); margin-bottom: 3px; }
 .balance-value { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -564,10 +564,19 @@ body.no-corporate-actions .layout {
 .order-metrics { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 14px;
   border-bottom: 1px solid var(--border-soft); }
 
-.orders-panel .table-scroll { max-height: 340px; }
-/* Thirteen columns do not compress gracefully. Given a floor, the row scrolls sideways instead
-   of squeezing the placement time down to "Sep 13, 11". */
-.orders-panel .grid { min-width: 960px; }
+.orders-panel .table-scroll { max-height: 420px; }
+
+/*
+ * The panel shares a row with the account rather than spanning the page, so the table has to fit
+ * a column rather than a screen. Pairs that are always read together are merged into one cell -
+ * type with time-in-force, and the limit with the price it actually filled at - which is fewer
+ * columns without dropping a single figure.
+ */
+.orders-panel .grid { min-width: 780px; }
+.orders-panel .grid th, .orders-panel .grid td { padding: 5px 7px; }
+.orders-panel .grid .sym { max-width: 150px; }
+.orders-panel .pair { color: var(--text-faint); }
+.orders-panel .fill-arrow { color: var(--text-faint); margin: 0 2px; }
 .orders-panel .grid td { font-size: 11.5px; white-space: nowrap; }
 .orders-panel .grid .sym { font-family: var(--mono); max-width: 220px; overflow: hidden;
   text-overflow: ellipsis; }
