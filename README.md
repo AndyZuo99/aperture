@@ -89,6 +89,18 @@ Live market data additionally needs an **OpenAPI Advanced Quotes** subscription,
 from both API access and any subscription bought in the Webull app. This was built against
 *Nasdaq Basic — Non Display*.
 
+### Bring your own credentials
+
+There are no shared keys here, and none are bundled. Running Aperture against live data means
+registering your **own** application at [developer.webull.com](https://developer.webull.com),
+accepting Webull's Open API Trading Agreement yourself, and supplying your own key and secret
+through the environment variables above. The same goes for the analyst: the Anthropic key is
+yours, and the API calls are billed to you.
+
+Webull's agreement licenses API access to the registered developer personally, for their own
+accounts. This repository is the source code, not access to anyone's account or data — so run it
+against your own credentials, and against paper trading first.
+
 ---
 
 ## Order history
