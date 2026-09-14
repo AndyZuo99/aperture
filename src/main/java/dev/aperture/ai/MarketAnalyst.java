@@ -182,7 +182,7 @@ public class MarketAnalyst {
                     toolCalls.add(toolUse.name());
                     results.add(ContentBlockParam.ofToolResult(ToolResultBlockParam.builder()
                             .toolUseId(toolUse.id())
-                            .content(execute(toolUse))
+                            .content(execute(toolUse, RunContext.NONE))
                             .build()));
                 }
                 if (results.isEmpty()) {
@@ -286,6 +286,11 @@ public class MarketAnalyst {
 
         Money budget = resolveBudget(account, capital);
 
+        // Bind the tools to the account this run is actually about, so the model does not have to
+        // repeat an id it was only told in prose to avoid falling back to a different account.
+        RunContext runContext = new RunContext(
+                environment.name(), account.map(BrokerAccount::accountId).orElse(""));
+
         List<String> toolCalls = new ArrayList<>();
         List<MessageParam> conversation = new ArrayList<>();
         conversation.add(MessageParam.builder()
@@ -332,7 +337,7 @@ public class MarketAnalyst {
                     }
                     results.add(ContentBlockParam.ofToolResult(ToolResultBlockParam.builder()
                             .toolUseId(toolUse.id())
-                            .content(execute(toolUse))
+                            .content(execute(toolUse, runContext))
                             .build()));
                 }
                 if (results.isEmpty()) {
@@ -519,7 +524,26 @@ public class MarketAnalyst {
      * exception, so the model can correct itself on the next turn instead of the whole run
      * failing.
      */
-    private String execute(ToolUseBlock toolUse) {
+    /**
+     * The account a run is about, for tool calls that leave it unspecified.
+     *
+     * <p>A recommendation run is told its environment and account in the opening brief, as prose.
+     * The tools that take an {@code accountId} were then falling back to "the first account in the
+     * environment" whenever the model did not repeat it back - so a run briefed on Individual
+     * Margin resolved its tradable universe against the Events account and said so in its own
+     * output. The run's account is the right default; the model can still name a different one
+     * explicitly.
+     */
+    record RunContext(String environment, String accountId) {
+        static final RunContext NONE = new RunContext("", "");
+    }
+
+    /** The model's argument when it gave one, otherwise the run's own. */
+    static String orRunContext(String argument, String fromRun) {
+        return argument == null || argument.isBlank() ? fromRun : argument;
+    }
+
+    private String execute(ToolUseBlock toolUse, RunContext context) {
         try {
             Map<String, Object> args = arguments(toolUse);
             Object result = switch (toolUse.name()) {
@@ -531,7 +555,8 @@ public class MarketAnalyst {
                         integer(args.get("days"), 60));
                 case "get_corporate_actions" -> toolkit.corporateActions(string(args.get("symbol")));
                 case "compare_adjustments" -> toolkit.compareAdjustments(string(args.get("symbol")));
-                case "get_account_summary" -> toolkit.accountSummary(string(args.get("environment")));
+                case "get_account_summary" -> toolkit.accountSummary(
+                        orRunContext(string(args.get("environment")), context.environment()));
                 case "get_feed_status" -> toolkit.feedStatus();
                 case "get_trend_statistics" -> toolkit.trendStatistics(
                         string(args.get("symbol")),
@@ -542,8 +567,8 @@ public class MarketAnalyst {
                         decimal(args.get("targetGainPercent")),
                         integer(args.get("horizonSessions"), 21));
                 case "get_tradable_universe" -> toolkit.tradableUniverse(
-                        string(args.get("environment")),
-                        string(args.get("accountId")),
+                        orRunContext(string(args.get("environment")), context.environment()),
+                        orRunContext(string(args.get("accountId")), context.accountId()),
                         string(args.get("query")),
                         integer(args.get("limit"), 40));
                 default -> Map.of("error", "Unknown tool: " + toolUse.name());

@@ -159,10 +159,41 @@ unreadable quote grid. Backfilling their history instead costs almost nothing, a
 search enormously — in a live run, the two best trades by reward-to-risk (PSX at 0.88, MRK at
 0.97) both came from the candidate pool, roughly double the best watchlist name.
 
-Candidates have no cached quote, so the planner fetches one **on demand** before pricing. The
-entry price is the single most important number on a recommendation, and the gap between a
-previous close and the live ask is the difference between a plan that is priced and one that is
-estimated.
+Candidates have no cached quote, so quotes are fetched **on demand** — cache first, then one
+batched `getSnapshots` call for whatever is missing or stale. The entry price is the single most
+important number on a recommendation, and the gap between a previous close and the live ask is the
+difference between a plan that is priced and one that is estimated.
+
+That on-demand path was originally only in the planner, and the asymmetry quietly defeated the
+whole point of the pool. The model's own `get_quotes` tool read the cache, so every non-watchlisted
+candidate came back with no bid or ask — and the model, correctly, refused to propose what it could
+not price. A real run said so in its own output:
+
+> *of the 110 names in the ranked pool, only the watchlisted handful return live bid/ask —
+> `get_quotes` on the higher-ranked non-watchlisted names (MU, KLAC, PSX, HAL, SLB, XLE) came back
+> empty, so I could not price an entry or justify a target on them and deliberately left them out
+> despite better hit rates*
+
+The pool was ranking a hundred names so the model could only ever act on ten. `get_quotes` now uses
+the batched on-demand path — a shortlist of six is one vendor call, not six — and symbols that
+genuinely have no quote are named in a `noQuoteAvailable` field rather than silently dropped, since
+a symbol that vanishes from a response is indistinguishable from a broken tool.
+
+### Tools resolve against the run's account
+
+A recommendation run is told its environment and account in the opening brief, as prose. The tools
+that take an `accountId` then defaulted to *the first account in the environment* whenever the
+model did not repeat that id back — which it usually did not, having been given it in a sentence
+rather than as a parameter. So a run briefed on Individual Margin resolved its tradable universe
+against the Events account, and noticed the contradiction itself:
+
+> *the tradable-universe/account default resolves to an Events Cash account; I have proposed only
+> equities, per the stated Individual Margin mandate*
+
+It reached the right answer despite the tool, which is the worst kind of pass — the next run might
+not. The run's environment and account are now bound to the tool dispatch and used whenever the
+model leaves those arguments blank. An account the model names explicitly still wins, because
+asking about a different one is legitimate; it is a default, not an override.
 
 ### What makes the target falsifiable
 
@@ -532,7 +563,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 201 tests
+mvn test        # 214 tests
 ```
 
 The ones worth reading:
@@ -571,6 +602,13 @@ The ones worth reading:
   a series that deliberately spans two sessions, at yesterday's prices nothing like today's, so
   any leakage from the vendor's rolling window is unmistakable. Pins the VWAP to a figure that can
   be checked by hand, and asserts an absent previous close stays absent.
+- [`OnDemandQuotesTest`](src/test/java/dev/aperture/marketdata/OnDemandQuotesTest.java) — that a
+  symbol outside the watchlist is fetched rather than skipped, that a shortlist costs one vendor
+  call rather than one per name, and that a stale quote is refreshed but survives when the refresh
+  cannot happen.
+- [`RunContextTest`](src/test/java/dev/aperture/ai/RunContextTest.java) — that an omitted
+  `accountId` resolves to the account the run is actually about, and that an explicitly named one
+  still wins.
 
 ---
 

@@ -93,22 +93,50 @@ public class AnalystToolkit {
     public Map<String, Object> quotes(List<String> symbols) {
         List<Map<String, Object>> rows = new ArrayList<>();
         List<String> unknown = new ArrayList<>();
+        List<String> resolved = new ArrayList<>();
+        Map<String, Instrument> instruments = new LinkedHashMap<>();
+
         for (String symbol : symbols) {
             Optional<Instrument> instrument = referenceData.resolve(symbol);
             if (instrument.isEmpty()) {
                 unknown.add(symbol);
                 continue;
             }
-            Optional<Quote> quote = marketData.quote(instrument.get().id());
-            if (quote.isEmpty()) {
+            String primary = instrument.get().primarySymbol();
+            instruments.putIfAbsent(primary, instrument.get());
+            if (!resolved.contains(primary)) {
+                resolved.add(primary);
+            }
+        }
+
+        // On demand, not cache-only. Only the watchlist is streamed, so reading the cache here
+        // meant the ranked candidate pool - the whole reason the pool is wider than the watchlist
+        // - came back with no bid or ask, and the model correctly refused to price names it had
+        // no quote for. One batched snapshot call covers the shortlist instead.
+        Map<String, Quote> fetched = marketData.quotesOnDemand(resolved);
+
+        List<String> unquoted = new ArrayList<>();
+        for (String symbol : resolved) {
+            Quote quote = fetched.get(symbol);
+            if (quote == null) {
+                unquoted.add(symbol);
                 continue;
             }
-            rows.add(quoteRow(instrument.get(), quote.get()));
+            rows.add(quoteRow(instruments.get(symbol), quote));
         }
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("quotes", rows);
         if (!unknown.isEmpty()) {
             out.put("unknownSymbols", unknown);
+        }
+        // Said explicitly rather than left as a gap in the list. A symbol that silently vanishes
+        // reads as an empty response, which is indistinguishable from the tool being broken.
+        if (!unquoted.isEmpty()) {
+            out.put("noQuoteAvailable", unquoted);
+            out.put("noQuoteReason", "The vendor returned no snapshot for these. Futures are not "
+                    + "entitled on this account; anything else is usually an untraded or delisted "
+                    + "symbol. Their last daily close is still available through get_history.");
         }
         return out;
     }

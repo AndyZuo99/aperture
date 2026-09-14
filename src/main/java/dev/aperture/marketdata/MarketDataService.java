@@ -7,6 +7,8 @@ import dev.aperture.instrument.ReferenceDataService;
 import dev.aperture.instrument.TradableUniverse;
 import dev.aperture.time.MarketClock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -260,21 +262,63 @@ public class MarketDataService {
      * window costs nothing.
      */
     public Optional<Quote> quoteOnDemand(String symbol) {
-        Optional<Quote> cached = quote(symbol);
-        if (cached.isPresent() && cached.get().isLive()
-                && !config.isStale(cached.get().receivedAt(), clock.now())) {
-            return cached;
+        Map<String, Quote> fetched = quotesOnDemand(List.of(symbol));
+        return fetched.isEmpty()
+                ? Optional.empty()
+                : Optional.of(fetched.values().iterator().next());
+    }
+
+    /**
+     * On-demand quotes for many symbols in as few vendor calls as possible.
+     *
+     * <p>The batch form exists because the one-at-a-time form does not scale to the question the
+     * recommender actually asks. Ranking runs over the whole candidate pool - around a hundred
+     * names - and the model then shortlists a handful to price. Fetching those one by one is a
+     * round trip each, where {@code getSnapshots} takes up to a hundred symbols in a single call.
+     *
+     * <p>Cached live quotes are used as they are; only the misses and the stale are fetched, so a
+     * shortlist that happens to be watchlisted costs nothing at all.
+     *
+     * @return quotes by primary symbol, omitting only what neither the cache nor the vendor had
+     */
+    public Map<String, Quote> quotesOnDemand(Collection<String> symbols) {
+        Map<String, Quote> out = new LinkedHashMap<>();
+        List<Instrument> toFetch = new ArrayList<>();
+
+        for (String symbol : symbols) {
+            Optional<Instrument> resolved = referenceData.resolve(symbol);
+            if (resolved.isEmpty()) {
+                continue;
+            }
+            Instrument instrument = resolved.get();
+            Quote cached = latest.get(instrument.id());
+            if (cached != null && cached.isLive()
+                    && !config.isStale(cached.receivedAt(), clock.now())) {
+                out.put(instrument.primarySymbol(), cached);
+            } else {
+                toFetch.add(instrument);
+            }
         }
-        Optional<Instrument> instrument = referenceData.resolve(symbol);
-        if (instrument.isEmpty() || !holder.isConnected() || rest.isEntitlementMissing()) {
-            return cached;
+
+        if (!toFetch.isEmpty() && holder.isConnected() && !rest.isEntitlementMissing()) {
+            try {
+                // Through the normal cache, so a second request inside the staleness window is
+                // free and the streaming feed keeps updating anything it also covers.
+                rest.quotes(toFetch).values().forEach(this::accept);
+            } catch (RuntimeException e) {
+                log.debug("On-demand quotes for {} symbol(s) failed: {}",
+                        toFetch.size(), e.getMessage());
+            }
         }
-        try {
-            rest.quotes(List.of(instrument.get())).values().forEach(this::accept);
-        } catch (RuntimeException e) {
-            log.debug("On-demand quote for {} failed: {}", symbol, e.getMessage());
+        // Whatever the fetch produced, plus any stale cached quote for the rest: a stale live
+        // quote is still a market observation, and it carries its own age for the caller to judge.
+        for (Instrument instrument : toFetch) {
+            Quote quote = latest.get(instrument.id());
+            if (quote != null) {
+                out.put(instrument.primarySymbol(), quote);
+            }
         }
-        return quote(instrument.get().id()).or(() -> cached);
+        return out;
     }
 
     /** Best bid and offer with sizes, when the entitlement permits it. */

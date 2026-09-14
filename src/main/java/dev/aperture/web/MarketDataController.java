@@ -92,9 +92,16 @@ public class MarketDataController {
                 "reason", watchlists.unquotableReason(resolved));
     }
 
+    /**
+     * One quote, fetched if it is not already streamed.
+     *
+     * <p>On demand rather than cache-only: only the watchlist is subscribed, so a symbol reached
+     * through search has no cached quote and this returned 404 for an instrument the vendor quotes
+     * perfectly well.
+     */
     @GetMapping("/quotes/{symbol}")
     public ResponseEntity<ApiDtos.QuoteView> quote(@PathVariable String symbol) {
-        return marketData.quote(symbol)
+        return marketData.quoteOnDemand(symbol)
                 .map(quote -> ResponseEntity.ok(mapper.toQuoteView(quote, clock.now())))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -237,7 +244,9 @@ public class MarketDataController {
         // The previous close comes from the daily series, not from the intraday window - the
         // earliest minute bar in that window is not the prior session's close.
         java.math.BigDecimal previousClose = null;
-        var quote = marketData.quote(symbol);
+        // On demand: the live view is reachable for any searched symbol, and a cache-only lookup
+        // left everything off the watchlist with no bid, ask or spread.
+        var quote = marketData.quoteOnDemand(symbol);
         if (quote.isPresent() && quote.get().previousClose().isPositive()) {
             previousClose = quote.get().previousClose().value();
         } else {
