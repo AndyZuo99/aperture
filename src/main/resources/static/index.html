@@ -91,23 +91,78 @@
         <div class="search-results" id="searchResults" hidden></div>
       </div>
 
-      <!-- The adjustment basis is a first-class control, not a setting buried somewhere.
-           Which basis a series is on changes what the chart means. -->
-      <div class="policy-switch" id="policySwitch" role="group" aria-label="Adjustment basis">
-        <button class="policy-btn" data-policy="NONE">Unadjusted</button>
-        <button class="policy-btn is-active" data-policy="SPLITS_ONLY">Split-adjusted</button>
-        <button class="policy-btn" data-policy="TOTAL_RETURN">Total return</button>
+      <!-- Two questions, two views: what has this done, and what is it doing now. -->
+      <div class="chart-mode" id="chartMode" role="group" aria-label="Chart mode">
+        <button class="chart-mode-btn is-active" data-chart-mode="historical">Historical</button>
+        <button class="chart-mode-btn" data-chart-mode="live">Live</button>
       </div>
     </div>
 
-    <div class="chart-meta">
-      <span class="stat"><span class="stat-label">Return</span> <span id="chartReturn">—</span></span>
-      <span class="stat"><span class="stat-label">Volatility</span> <span id="chartVol">—</span></span>
-      <span class="stat"><span class="stat-label">Basis</span> <span id="chartBasis">—</span></span>
+    <!-- ── Historical ─────────────────────────────────────────── -->
+    <div id="historicalMode">
+      <div class="chart-controls">
+        <div class="range-switch" id="rangeSwitch" role="group" aria-label="Date range">
+          <button class="range-btn" data-range="1W">1W</button>
+          <button class="range-btn" data-range="1M">1M</button>
+          <button class="range-btn" data-range="3M">3M</button>
+          <button class="range-btn is-active" data-range="1Y">1Y</button>
+          <button class="range-btn" data-range="5Y">5Y</button>
+        </div>
+
+        <!-- The adjustment basis is a first-class control, not a setting buried somewhere.
+             Which basis a series is on changes what the chart means. -->
+        <div class="policy-switch" id="policySwitch" role="group" aria-label="Adjustment basis">
+          <button class="policy-btn" data-policy="NONE">Unadjusted</button>
+          <button class="policy-btn is-active" data-policy="SPLITS_ONLY">Split-adjusted</button>
+          <button class="policy-btn" data-policy="TOTAL_RETURN">Total return</button>
+        </div>
+      </div>
+
+      <div class="chart-meta">
+        <span class="stat"><span class="stat-label">Return</span> <span id="chartReturn">—</span></span>
+        <span class="stat"><span class="stat-label">Volatility</span> <span id="chartVol">—</span></span>
+        <span class="stat"><span class="stat-label">High</span> <span id="chartHigh">—</span></span>
+        <span class="stat"><span class="stat-label">Low</span> <span id="chartLow">—</span></span>
+        <span class="stat"><span class="stat-label">Max drawdown</span> <span id="chartDrawdown">—</span></span>
+        <span class="stat"><span class="stat-label">Best/worst bar</span> <span id="chartExtremes">—</span></span>
+        <span class="stat"><span class="stat-label">Avg volume</span> <span id="chartAvgVol">—</span></span>
+        <span class="stat"><span class="stat-label">Basis</span> <span id="chartBasis">—</span></span>
+        <span class="stat"><span class="stat-label">Window</span> <span id="chartWindow">—</span></span>
+      </div>
+
+      <!-- Set when the delivered basis is not the one requested. -->
+      <p class="note" id="chartNote" hidden></p>
     </div>
 
-    <!-- Set when the delivered basis is not the one requested. -->
-    <p class="note" id="chartNote" hidden></p>
+    <!-- ── Live ───────────────────────────────────────────────── -->
+    <div id="liveMode" hidden>
+      <div class="live-bar">
+        <span class="live-price" id="livePrice">—</span>
+        <span class="live-change" id="liveChange"></span>
+        <span class="live-session" id="liveSession"></span>
+        <span class="live-updated" id="liveUpdated"></span>
+      </div>
+
+      <div class="chart-meta">
+        <span class="stat"><span class="stat-label">Open</span> <span id="liveOpen">—</span></span>
+        <span class="stat"><span class="stat-label">High</span> <span id="liveHigh">—</span></span>
+        <span class="stat"><span class="stat-label">Low</span> <span id="liveLow">—</span></span>
+        <span class="stat"><span class="stat-label">VWAP</span> <span id="liveVwap">—</span></span>
+        <span class="stat"><span class="stat-label">Bid / Ask</span> <span id="liveBidAsk">—</span></span>
+        <span class="stat"><span class="stat-label">Spread</span> <span id="liveSpread">—</span></span>
+        <span class="stat"><span class="stat-label">Volume</span> <span id="liveVolume">—</span></span>
+        <span class="stat"><span class="stat-label">vs open</span> <span id="liveVsOpen">—</span></span>
+      </div>
+
+      <!-- Where the last trade sits between today's low and high. -->
+      <div class="range-meter" id="liveRangeMeter" title="Position in today's range">
+        <span class="range-low" id="liveRangeLow"></span>
+        <span class="range-track"><span class="range-fill" id="liveRangeFill"></span></span>
+        <span class="range-high" id="liveRangeHigh"></span>
+      </div>
+
+      <p class="note" id="liveNote" hidden></p>
+    </div>
 
     <canvas id="chartCanvas" height="260" aria-label="Price history"></canvas>
     <p class="empty-chart" id="chartEmpty">Select a symbol. Daily history needs a live Webull connection.</p>

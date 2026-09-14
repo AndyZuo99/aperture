@@ -6,6 +6,7 @@ import dev.aperture.corporate.PriceBasis;
 import dev.aperture.instrument.InstrumentId;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Objects;
 
@@ -21,6 +22,14 @@ import java.util.Objects;
 public record Bar(
         InstrumentId instrumentId,
         LocalDate sessionDate,
+        /**
+         * When this bar opened.
+         *
+         * <p>Carried because a bar is not always a day: the one-week chart and the live session
+         * view use thirty- and one-minute bars, and every bar in a session shares a session date.
+         * Without a time they would all plot at the same x position.
+         */
+        Instant startTime,
         Price open,
         Price high,
         Price low,
@@ -31,12 +40,33 @@ public record Bar(
     public Bar {
         Objects.requireNonNull(instrumentId, "instrumentId");
         Objects.requireNonNull(sessionDate, "sessionDate");
+        Objects.requireNonNull(startTime, "startTime");
         Objects.requireNonNull(open, "open");
         Objects.requireNonNull(high, "high");
         Objects.requireNonNull(low, "low");
         Objects.requireNonNull(close, "close");
         Objects.requireNonNull(volume, "volume");
         Objects.requireNonNull(basis, "basis");
+    }
+
+    /**
+     * A daily bar, whose start is taken as the session's regular open.
+     *
+     * <p>Most of the system deals in daily bars, so they should not have to state a time that is
+     * implied by the date.
+     */
+    public Bar(InstrumentId instrumentId, LocalDate sessionDate, Price open, Price high,
+               Price low, Price close, Quantity volume, PriceBasis basis) {
+        this(instrumentId, sessionDate,
+                sessionDate.atTime(dev.aperture.time.MarketCalendar.REGULAR_OPEN)
+                        .atZone(dev.aperture.time.MarketCalendar.EXCHANGE_ZONE).toInstant(),
+                open, high, low, close, volume, basis);
+    }
+
+    /** Whether this bar covers less than a full session. */
+    public boolean isIntraday() {
+        return !startTime.equals(sessionDate.atTime(dev.aperture.time.MarketCalendar.REGULAR_OPEN)
+                .atZone(dev.aperture.time.MarketCalendar.EXCHANGE_ZONE).toInstant());
     }
 
     /**
@@ -55,6 +85,7 @@ public record Bar(
         return new Bar(
                 instrumentId,
                 sessionDate,
+                startTime,
                 open.scaledBy(priceFactor),
                 high.scaledBy(priceFactor),
                 low.scaledBy(priceFactor),
@@ -64,7 +95,8 @@ public record Bar(
     }
 
     public Bar withBasis(PriceBasis newBasis) {
-        return new Bar(instrumentId, sessionDate, open, high, low, close, volume, newBasis);
+        return new Bar(instrumentId, sessionDate, startTime, open, high, low, close, volume,
+                newBasis);
     }
 
     /** Simple return from the previous bar's close, as a fraction. */

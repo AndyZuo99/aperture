@@ -34,6 +34,13 @@ const state = {
   quotesRequest: 0,
   searchRequest: 0,
   chartUniverse: 'EQUITY',   // the universe the charted symbol belongs to
+  chartMode: 'historical',   // 'historical' shows a window of sessions, 'live' shows today
+  chartRange: '1Y',
+  intraday: null,
+  liveSeries: null,
+  intradayRequest: 0,
+  liveTimer: null,
+  livePrice: null,     // the previous headline price, to tint the next one by direction
 };
 
 /* ── helpers ─────────────────────────────────────────────────────── */
@@ -72,6 +79,14 @@ const compact = (value) => {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
   return String(n);
+};
+
+// Bar timestamps are instants; a trader reads them in exchange time, never the browser's.
+const clockTime = (iso) => {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit',
+  });
 };
 
 const signClass = (value) => (Number(value) > 0 ? 'up' : Number(value) < 0 ? 'down' : 'flat');
@@ -228,6 +243,8 @@ function openQuoteStream() {
 
 function selectSymbol(symbol, universe, name) {
   state.selectedSymbol = symbol;
+  state.livePrice = null;
+  state.liveSeries = null;
   state.chartUniverse = universe || state.universe || 'EQUITY';
   // Both tables can select: the watchlist grid and the tradable-instruments panel.
   document.querySelectorAll('tr[data-symbol]').forEach((row) =>
@@ -241,8 +258,63 @@ function selectSymbol(symbol, universe, name) {
   // A searched security has no row in the grid, so say where it came from rather than leaving
   // the chart looking like it lost its place in the watchlist.
   $('chartOffWatchlist').hidden = state.quotes.has(symbol);
-  loadHistory();
+  refreshChart();
 }
+
+/* ── chart modes ─────────────────────────────────────────────────── */
+
+/*
+ * Two views of one security, answering two different questions.
+ *
+ * Historical: over a chosen window, what has this done - the return, how violently it got there,
+ * and how far underwater it went on the way. Live: what is it doing in this session, against the
+ * open, today's range, and the volume-weighted average everyone else has been paying.
+ *
+ * They are kept as separate loads rather than one endpoint with a flag because their refresh
+ * behaviour is nothing alike: a year of daily bars is fetched once and is then done, while the
+ * session has to keep re-reading itself for as long as the trader is watching it.
+ */
+function setChartMode(mode) {
+  state.chartMode = mode;
+  document.querySelectorAll('.chart-mode-btn').forEach((button) =>
+    button.classList.toggle('is-active', button.dataset.chartMode === mode));
+  $('historicalMode').hidden = mode !== 'historical';
+  $('liveMode').hidden = mode !== 'live';
+  refreshChart();
+}
+
+function refreshChart() {
+  // Only one mode polls, and only while it is the one on screen.
+  stopLiveRefresh();
+  if (state.chartMode === 'live') {
+    loadIntraday();
+    startLiveRefresh();
+  } else {
+    loadHistory();
+  }
+}
+
+function startLiveRefresh() {
+  // Fast enough to be worth calling live, slow enough not to hammer the vendor: the minute bars
+  // themselves only change once a minute, but the quote on top of them moves continuously.
+  state.liveTimer = setInterval(loadIntraday, 15000);
+}
+
+function stopLiveRefresh() {
+  if (state.liveTimer) {
+    clearInterval(state.liveTimer);
+    state.liveTimer = null;
+  }
+}
+
+function setChartRange(range) {
+  state.chartRange = range;
+  document.querySelectorAll('.range-btn').forEach((button) =>
+    button.classList.toggle('is-active', button.dataset.range === range));
+  if (state.chartMode === 'historical') loadHistory();
+}
+
+/* ── historical ──────────────────────────────────────────────────── */
 
 async function loadHistory() {
   if (!state.selectedSymbol) return;
@@ -250,7 +322,7 @@ async function loadHistory() {
   try {
     const history = await getJson(
       `/api/market/history/${encodeURIComponent(state.selectedSymbol)}` +
-      `?policy=${state.policy}&days=250&universe=${state.chartUniverse}`);
+      `?policy=${state.policy}&range=${state.chartRange}&universe=${state.chartUniverse}`);
     if (requestId !== state.historyRequest) return;
     state.history = history;
 
@@ -258,11 +330,10 @@ async function loadHistory() {
       $('chartEmpty').hidden = false;
       $('chartEmpty').textContent = state.chartUniverse === 'FUTURES'
         ? 'Futures market data is a separate Webull entitlement, so this contract cannot be charted.'
-        : `No daily history available for ${state.selectedSymbol}.`;
+        : `No ${state.chartRange} history available for ${state.selectedSymbol}.`;
       $('chartCanvas').hidden = true;
-      $('chartReturn').textContent = '—';
-      $('chartVol').textContent = '—';
-      $('chartBasis').textContent = '—';
+      ['chartReturn', 'chartVol', 'chartHigh', 'chartLow', 'chartDrawdown', 'chartExtremes',
+        'chartAvgVol', 'chartBasis', 'chartWindow'].forEach((id) => { $(id).textContent = '—'; });
       $('chartNote').hidden = true;
       return;
     }
@@ -275,7 +346,24 @@ async function loadHistory() {
       ? '—' : `<span class="${signClass(ret)}">${signed(ret)}%</span>`;
     $('chartVol').textContent = history.annualisedVolatilityPercent
       ? Number(history.annualisedVolatilityPercent).toFixed(1) + '%' : '—';
+    $('chartHigh').textContent = money(history.rangeHigh);
+    $('chartLow').textContent = money(history.rangeLow);
+    // Peak-to-trough on closes: the number that says what holding this actually felt like, which
+    // a return alone never does.
+    $('chartDrawdown').innerHTML = history.maxDrawdownPercent === null
+      || history.maxDrawdownPercent === undefined
+      ? '—' : `<span class="down">${money(history.maxDrawdownPercent)}%</span>`;
+    $('chartExtremes').innerHTML = history.bestBarPercent === null
+      || history.bestBarPercent === undefined
+      ? '—'
+      : `<span class="up">${signed(history.bestBarPercent)}%</span> / ` +
+        `<span class="down">${signed(history.worstBarPercent)}%</span>`;
+    $('chartAvgVol').textContent = compact(history.averageVolume);
     $('chartBasis').textContent = history.basisLabel;
+    // The dates actually delivered, not the ones the button implies: 5Y stops at the vendor's
+    // 1,200-session ceiling, and a recent listing has less history than any button promises.
+    $('chartWindow').textContent = history.firstDate
+      ? `${history.firstDate} → ${history.lastDate} (${history.bars.length} bars)` : '—';
 
     // Shown only when the delivered basis is not the one asked for — the UI must never label a
     // chart with a basis it does not actually have.
@@ -292,7 +380,130 @@ async function loadHistory() {
   }
 }
 
-function drawChart(history) {
+/* ── live session ────────────────────────────────────────────────── */
+
+async function loadIntraday() {
+  if (!state.selectedSymbol || state.chartMode !== 'live') return;
+  const requestId = ++state.intradayRequest;
+  try {
+    const session = await getJson(
+      `/api/market/intraday/${encodeURIComponent(state.selectedSymbol)}` +
+      `?universe=${state.chartUniverse}`);
+    if (requestId !== state.intradayRequest || state.chartMode !== 'live') return;
+    state.intraday = session;
+
+    if (!session || !session.bars.length) {
+      $('chartEmpty').hidden = false;
+      $('chartEmpty').textContent = state.chartUniverse === 'FUTURES'
+        ? 'Futures market data is a separate Webull entitlement, so this contract cannot be charted.'
+        : `No intraday data available for ${state.selectedSymbol}.`;
+      $('chartCanvas').hidden = true;
+      clearLiveStats();
+      return;
+    }
+
+    $('chartEmpty').hidden = true;
+    $('chartCanvas').hidden = false;
+    renderLiveStats(session);
+    // A session that is not today's cannot change - an event contract that settled in July, or a
+    // chart left open over a weekend. Polling it forever is pure noise against the vendor.
+    if (session.note) stopLiveRefresh();
+    state.liveSeries = {
+      bars: session.bars,
+      intraday: true,
+      // Both are lines a day trader watches price against, so they belong on the chart rather
+      // than only in the numbers above it. Including them in the scale keeps a gap visible.
+      referenceLines: [
+        { value: session.previousClose, style: 'faint', label: 'prev close' },
+        { value: session.vwap, style: 'accent', label: 'VWAP' },
+      ].filter((line) => line.value !== null && line.value !== undefined),
+      baseline: session.previousClose ?? session.open,
+    };
+    drawChart(state.liveSeries);
+  } catch (e) {
+    if (requestId !== state.intradayRequest) return;
+    $('chartEmpty').hidden = false;
+    $('chartEmpty').textContent = 'Could not load the session: ' + e.message;
+    $('chartCanvas').hidden = true;
+  }
+}
+
+function clearLiveStats() {
+  ['livePrice', 'liveOpen', 'liveHigh', 'liveLow', 'liveVwap', 'liveBidAsk', 'liveSpread',
+    'liveVolume', 'liveVsOpen'].forEach((id) => { $(id).textContent = '—'; });
+  $('liveChange').textContent = '';
+  $('liveSession').textContent = '';
+  $('liveUpdated').textContent = '';
+  $('liveNote').hidden = true;
+}
+
+function renderLiveStats(session) {
+  // The headline is the change against the previous close when there is one — that is the
+  // number quoted everywhere else — and against the open otherwise.
+  const usePrior = session.changeFromPreviousClose !== null
+    && session.changeFromPreviousClose !== undefined;
+  const change = usePrior ? session.changeFromPreviousClose : session.changeFromOpen;
+  const percent = usePrior ? session.changeFromPreviousClosePercent : session.changeFromOpenPercent;
+
+  const price = $('livePrice');
+  price.textContent = money(session.last);
+  // A one-shot tint on the direction of the move, so a glance catches it without reading digits.
+  if (state.livePrice !== null && Number(session.last) !== state.livePrice) {
+    price.classList.remove('tick-up', 'tick-down');
+    void price.offsetWidth;   // restart the animation rather than let it be a no-op
+    price.classList.add(Number(session.last) > state.livePrice ? 'tick-up' : 'tick-down');
+  }
+  state.livePrice = Number(session.last);
+
+  $('liveChange').innerHTML =
+    `<span class="${signClass(change)}">${signed(change)} (${signed(percent)}%)</span>` +
+    (usePrior ? ' vs prev close' : ' vs open');
+  $('liveSession').textContent =
+    `${session.sessionDate} · ${session.session}${session.marketOpen ? '' : ' · closed'}`;
+  $('liveUpdated').textContent = session.note
+    ? 'session closed — not updating'
+    : 'updated ' + new Date().toLocaleTimeString('en-US',
+        { timeZone: 'America/New_York', hour12: false });
+
+  $('liveOpen').textContent = money(session.open);
+  $('liveHigh').textContent = money(session.high);
+  $('liveLow').textContent = money(session.low);
+  // Above or below VWAP is the read, not the number on its own.
+  $('liveVwap').innerHTML = session.vwap === null || session.vwap === undefined
+    ? '—'
+    : `${money(session.vwap)} <span class="${session.aboveVwap ? 'up' : 'down'}">` +
+      `${session.aboveVwap ? 'above' : 'below'}</span>`;
+
+  const quote = session.quote;
+  $('liveBidAsk').textContent = quote && quote.bid !== null && quote.bid !== undefined
+    ? `${money(quote.bid)} / ${money(quote.ask)}` : '—';
+  $('liveSpread').textContent = quote && quote.spreadBps !== null
+    && quote.spreadBps !== undefined
+    ? Number(quote.spreadBps).toFixed(1) + ' bp' : '—';
+  $('liveVolume').textContent = compact(session.volume);
+  $('liveVsOpen').innerHTML =
+    `<span class="${signClass(session.changeFromOpen)}">${signed(session.changeFromOpen)} ` +
+    `(${signed(session.changeFromOpenPercent)}%)</span>`;
+
+  const position = Number(session.rangePosition);
+  $('liveRangeLow').textContent = money(session.low);
+  $('liveRangeHigh').textContent = money(session.high);
+  $('liveRangeFill').style.left = position + '%';
+  $('liveRangeMeter').title =
+    `Last trade sits ${position.toFixed(0)}% of the way up today's range`;
+
+  $('liveNote').hidden = !session.note;
+  if (session.note) $('liveNote').textContent = session.note;
+}
+
+/* ── canvas ──────────────────────────────────────────────────────── */
+
+/**
+ * Draws a price series. Takes the shape both views share — bars, whether they are intraday, and
+ * any reference lines — so the historical and live charts are one renderer rather than two that
+ * drift apart.
+ */
+function drawChart(series) {
   const canvas = $('chartCanvas');
   const ratio = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
@@ -304,10 +515,13 @@ function drawChart(history) {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const bars = history.bars;
+  const bars = series.bars;
   const closes = bars.map((b) => Number(b.close));
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
+  const references = (series.referenceLines || []).map((line) => Number(line.value));
+  // Reference lines share the scale: a gap that puts the previous close outside the day's range
+  // must be visible as a gap, not silently clipped to the edge of the plot.
+  const min = Math.min(...closes, ...references);
+  const max = Math.max(...closes, ...references);
   const range = max - min || 1;
 
   const padLeft = 54, padRight = 12, padTop = 14, padBottom = 24;
@@ -322,7 +536,11 @@ function drawChart(history) {
   const textColor = styles.getPropertyValue('--text-faint').trim();
   const up = styles.getPropertyValue('--up').trim();
   const down = styles.getPropertyValue('--down').trim();
-  const lineColor = closes[closes.length - 1] >= closes[0] ? up : down;
+  // Against the baseline where one is given — intraday, green means up on the day, not up since
+  // whichever minute the window happens to start at.
+  const base = series.baseline !== null && series.baseline !== undefined
+    ? Number(series.baseline) : closes[0];
+  const lineColor = closes[closes.length - 1] >= base ? up : down;
 
   // Horizontal gridlines with price labels.
   ctx.font = '10px ui-monospace, Menlo, monospace';
@@ -340,14 +558,16 @@ function drawChart(history) {
     ctx.fillText(value.toFixed(2), padLeft - 8, py + 3);
   }
 
-  // Date labels at either end.
+  // Axis labels at either end: clock times within a session, dates across sessions.
+  const label = (bar) => (series.intraday ? clockTime(bar.time) : bar.date);
+  ctx.fillStyle = textColor;
   ctx.textAlign = 'left';
-  ctx.fillText(bars[0].date, padLeft, height - 8);
+  ctx.fillText(label(bars[0]), padLeft, height - 8);
   ctx.textAlign = 'right';
-  ctx.fillText(bars[bars.length - 1].date, width - padRight, height - 8);
+  ctx.fillText(label(bars[bars.length - 1]), width - padRight, height - 8);
 
   // Ex-date markers, so a discontinuity in the raw series has a visible cause.
-  (history.actionsInWindow || []).forEach((action) => {
+  (series.actionsInWindow || []).forEach((action) => {
     const index = bars.findIndex((b) => b.date >= action.exDate);
     if (index < 0) return;
     const px = Math.round(x(index)) + 0.5;
@@ -359,6 +579,29 @@ function drawChart(history) {
     ctx.moveTo(px, padTop);
     ctx.lineTo(px, padTop + plotHeight);
     ctx.stroke();
+    ctx.restore();
+  });
+
+  // Reference lines (previous close, VWAP), labelled in place so they need no legend.
+  (series.referenceLines || []).forEach((line) => {
+    const py = Math.round(y(Number(line.value))) + 0.5;
+    ctx.save();
+    ctx.strokeStyle = line.style === 'accent'
+      ? styles.getPropertyValue('--accent').trim() : textColor;
+    ctx.globalAlpha = line.style === 'accent' ? 0.7 : 0.45;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padLeft, py);
+    ctx.lineTo(width - padRight, py);
+    ctx.stroke();
+    // The line stays subtle, but the label has to be readable — it is the only thing that says
+    // which of the two references this is.
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = line.style === 'accent'
+      ? styles.getPropertyValue('--accent').trim() : styles.getPropertyValue('--text-dim').trim();
+    ctx.textAlign = 'left';
+    ctx.fillText(line.label, padLeft + 4, py - 3);
     ctx.restore();
   });
 
@@ -1124,6 +1367,23 @@ function wireEvents() {
       loadHistory();
     }));
 
+  document.querySelectorAll('.range-btn').forEach((button) =>
+    button.addEventListener('click', () => setChartRange(button.dataset.range)));
+
+  document.querySelectorAll('.chart-mode-btn').forEach((button) =>
+    button.addEventListener('click', () => setChartMode(button.dataset.chartMode)));
+
+  // Polling a session nobody is looking at is pure waste, and a tab left open overnight would
+  // otherwise keep asking the vendor for a market that closed hours ago.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopLiveRefresh();
+    } else if (state.chartMode === 'live' && state.selectedSymbol) {
+      loadIntraday();
+      startLiveRefresh();
+    }
+  });
+
   $('askForm').addEventListener('submit', (event) => {
     event.preventDefault();
     ask($('askInput').value);
@@ -1147,8 +1407,17 @@ function wireEvents() {
   let resizeTimer;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (state.history) drawChart(state.history); }, 150);
+    resizeTimer = setTimeout(redrawChart, 150);
   });
+}
+
+/** Repaints the chart currently on screen, from data already loaded. */
+function redrawChart() {
+  if (state.chartMode === 'live') {
+    if (state.liveSeries) drawChart(state.liveSeries);
+  } else if (state.history && state.history.bars.length) {
+    drawChart(state.history);
+  }
 }
 
 function start() {

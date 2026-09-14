@@ -78,32 +78,47 @@ public class WebullInstrumentClient {
      */
     public List<dev.aperture.marketdata.Bar> history(String symbol, TradableUniverse universe,
                                                      int count) {
+        return history(symbol, universe, "D", count);
+    }
+
+    /**
+     * Bars at any granularity the vendor supports.
+     *
+     * @param timespan {@code D} for daily, or an intraday code such as {@code M1}, {@code M30}.
+     *     Verified working for equities, crypto and event contracts alike.
+     * @param count capped at 1,200 - the vendor refuses more with
+     *     "The count ranges is 1 to 1200."
+     */
+    public List<dev.aperture.marketdata.Bar> history(String symbol, TradableUniverse universe,
+                                                     String timespan, int count) {
         Optional<DataClient> client = holder.dataClient();
         if (client.isEmpty() || symbol == null || symbol.isBlank()) {
             return List.of();
         }
+        int bars = Math.max(1, Math.min(count, dev.aperture.analysis.ChartRange.MAX_BARS));
         dev.aperture.instrument.InstrumentId id =
                 dev.aperture.instrument.InstrumentId.of(symbol.toUpperCase());
         try {
             return switch (universe) {
-                case EQUITY -> equityHistory(client.get(), symbol, id, count);
+                case EQUITY -> equityHistory(client.get(), symbol, id, timespan, bars);
                 case CRYPTO -> barsFrom(client.get().getCryptoBars(
                         java.util.Set.of(symbol.toUpperCase()),
-                        Category.US_CRYPTO.name(), "D", count, Boolean.FALSE), id);
-                case EVENT -> eventHistory(client.get(), symbol, id, count);
+                        Category.US_CRYPTO.name(), timespan, bars, Boolean.FALSE), id);
+                case EVENT -> eventHistory(client.get(), symbol, id, timespan, bars);
                 case FUTURES -> List.of();
             };
         } catch (RuntimeException e) {
-            log.debug("History for {} ({}) unavailable: {}", symbol, universe, e.getMessage());
+            log.debug("History for {} ({} {}) unavailable: {}",
+                    symbol, universe, timespan, e.getMessage());
             return List.of();
         }
     }
 
     private List<dev.aperture.marketdata.Bar> equityHistory(
             DataClient client, String symbol,
-            dev.aperture.instrument.InstrumentId id, int count) {
+            dev.aperture.instrument.InstrumentId id, String timespan, int count) {
         var response = client.getBatchBars(List.of(symbol.toUpperCase()),
-                Category.US_STOCK.name(), "D", count);
+                Category.US_STOCK.name(), timespan, count);
         if (response == null || response.getResult() == null || response.getResult().isEmpty()) {
             return List.of();
         }
@@ -113,9 +128,9 @@ public class WebullInstrumentClient {
 
     private List<dev.aperture.marketdata.Bar> eventHistory(
             DataClient client, String symbol,
-            dev.aperture.instrument.InstrumentId id, int count) {
+            dev.aperture.instrument.InstrumentId id, String timespan, int count) {
         var response = client.getEventBars(java.util.Set.of(symbol.toUpperCase()),
-                Category.US_EVENT.name(), "D", count, Boolean.FALSE);
+                Category.US_EVENT.name(), timespan, count, Boolean.FALSE);
         if (response == null || response.isEmpty()) {
             return List.of();
         }
@@ -176,6 +191,7 @@ public class WebullInstrumentClient {
             return Optional.of(new dev.aperture.marketdata.Bar(
                     id,
                     start.atZone(dev.aperture.time.MarketCalendar.EXCHANGE_ZONE).toLocalDate(),
+                    start,
                     dev.aperture.common.Price.of(o), dev.aperture.common.Price.of(h),
                     dev.aperture.common.Price.of(l), dev.aperture.common.Price.of(c),
                     dev.aperture.common.Quantity.of(

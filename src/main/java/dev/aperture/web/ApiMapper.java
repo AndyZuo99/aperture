@@ -64,6 +64,7 @@ public class ApiMapper {
     public ApiDtos.BarView toBarView(Bar bar) {
         return new ApiDtos.BarView(
                 bar.sessionDate().toString(),
+                bar.startTime().toString(),
                 bar.open().toDisplay(),
                 bar.high().toDisplay(),
                 bar.low().toDisplay(),

@@ -46,6 +46,9 @@ public final class ApiDtos {
     /** One bar on the chart. */
     public record BarView(
             String date,
+            /* The bar's opening instant. Intraday bars share a date, so the time is what
+               distinguishes them on the x-axis. */
+            String time,
             BigDecimal open,
             BigDecimal high,
             BigDecimal low,
@@ -71,10 +74,54 @@ public final class ApiDtos {
             String basisDescription,
             boolean basisSatisfied,
             String note,
+            String range,
+            String rangeDescription,
+            boolean intraday,
             List<BarView> bars,
             BigDecimal windowReturnPercent,
             BigDecimal annualisedVolatilityPercent,
+            /* Descriptive statistics for the window actually shown. */
+            BigDecimal rangeHigh,
+            BigDecimal rangeLow,
+            BigDecimal averageVolume,
+            BigDecimal bestBarPercent,
+            BigDecimal worstBarPercent,
+            BigDecimal maxDrawdownPercent,
+            String firstDate,
+            String lastDate,
             List<ActionView> actionsInWindow) {
+    }
+
+    /**
+     * One trading session, for the live view.
+     *
+     * <p>Answers a different question from the historical chart: not "is this worth holding" but
+     * "where is price now against today's open, today's range, and the average everyone else
+     * paid".
+     */
+    public record IntradayView(
+            String symbol,
+            String name,
+            String universe,
+            String sessionDate,
+            String session,
+            boolean marketOpen,
+            List<BarView> bars,
+            BigDecimal open,
+            BigDecimal high,
+            BigDecimal low,
+            BigDecimal last,
+            BigDecimal volume,
+            BigDecimal vwap,
+            Boolean aboveVwap,
+            BigDecimal previousClose,
+            BigDecimal changeFromOpen,
+            BigDecimal changeFromOpenPercent,
+            BigDecimal changeFromPreviousClose,
+            BigDecimal changeFromPreviousClosePercent,
+            BigDecimal rangePosition,
+            QuoteView quote,
+            String note) {
     }
 
     /** A corporate action, with where it came from. */

@@ -305,6 +305,7 @@ public class WebullQuoteClient implements QuoteSource {
         return Optional.of(new Bar(
                 id,
                 start.atZone(MarketCalendar.EXCHANGE_ZONE).toLocalDate(),
+                start,
                 Price.of(open), Price.of(high), Price.of(low), Price.of(close),
                 Quantity.of(orDefault(decimal(vendor.getVolume()), BigDecimal.ZERO)),
                 // Verified against live data: Webull's daily bars are ALREADY split-adjusted.

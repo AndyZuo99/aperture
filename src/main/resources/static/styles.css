@@ -508,3 +508,49 @@ body.no-corporate-actions .layout {
   padding: 2px 6px; border-radius: 3px; margin-left: 7px;
   background: var(--accent-soft); color: var(--accent); vertical-align: middle;
 }
+
+
+/* ── Chart modes ───────────────────────────────────────────────── */
+
+.chart-mode { display: flex; gap: 2px; margin-left: auto; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+.chart-mode-btn { background: none; border: 0; color: var(--text-dim); font: inherit; font-size: 11px;
+  padding: 4px 12px; border-radius: 4px; cursor: pointer; }
+.chart-mode-btn:hover { color: var(--text); }
+.chart-mode-btn.is-active { background: var(--bg-raised); color: var(--accent); }
+
+.chart-controls { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft); flex-wrap: wrap; }
+
+.range-switch { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px; }
+.range-btn { background: none; border: 0; color: var(--text-dim); font: inherit; font-size: 11px;
+  font-family: var(--mono); padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.range-btn:hover { color: var(--text); }
+.range-btn.is-active { background: var(--bg-raised); color: var(--accent); }
+
+.chart-controls .policy-switch { margin-left: auto; }
+
+/* ── Live view ─────────────────────────────────────────────────── */
+
+.live-bar { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft); flex-wrap: wrap; }
+.live-price { font-family: var(--mono); font-size: 24px; font-variant-numeric: tabular-nums;
+  font-weight: 600; }
+.live-change { font-family: var(--mono); font-size: 13px; }
+.live-session { font-size: 11px; color: var(--text-faint); }
+.live-updated { margin-left: auto; font-size: 10.5px; color: var(--text-faint);
+  font-family: var(--mono); }
+
+/* A brief tint on the headline price when it moves, so a glance catches direction. */
+@keyframes live-up   { from { color: var(--up); }   to { color: var(--text); } }
+@keyframes live-down { from { color: var(--down); } to { color: var(--text); } }
+.live-price.tick-up   { animation: live-up 0.7s ease-out; }
+.live-price.tick-down { animation: live-down 0.7s ease-out; }
+
+.range-meter { display: flex; align-items: center; gap: 9px; padding: 9px 14px;
+  border-bottom: 1px solid var(--border-soft); font-family: var(--mono); font-size: 10.5px;
+  color: var(--text-faint); }
+.range-track { flex: 1; height: 4px; background: var(--bg); border-radius: 2px; position: relative; }
+.range-fill { position: absolute; top: -3px; width: 2px; height: 10px; background: var(--accent);
+  border-radius: 1px; }

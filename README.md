@@ -248,6 +248,66 @@ they have no corporate actions to restate. The chart's return and volatility are
 bars actually displayed rather than from stored history, which is what makes them appear for a
 searched symbol at all. Futures charts refuse, for the same entitlement reason as everything else.
 
+### Two views of one security: Historical and Live
+
+A chart answers one of two questions and they need different shapes. *What has this done* is a
+window of sessions. *What is it doing* is today, and nothing else. The chart header carries a
+**Historical / Live** switch, and each mode brings its own controls.
+
+**Historical** takes a range — `1W`, `1M`, `3M`, `1Y`, `5Y` — alongside the adjustment basis, and
+reports the window it actually drew: return, annualised volatility, the high and low, maximum
+drawdown, the best and worst single bar, and average volume. Return alone flatters a series that
+took a 33% drawdown to get there, so the drawdown sits next to it.
+
+Two details are less obvious than they look:
+
+- **A range is a span of time; the vendor sells a count of bars.** Those coincide only for daily
+  ranges, where one bar is one session. Five daily closes is not a week's chart, it is a line
+  between two prices — so `1W` uses thirty-minute bars. Asking for 120 of them returned *eleven*
+  calendar days of data under a button labelled `1W`, because bars-per-session varies with the
+  venue and with extended hours. The fetch is now deliberately generous and
+  [`ChartRange.trim`](src/main/java/dev/aperture/analysis/ChartRange.java) cuts the series to the
+  window the button claims — measured from the last bar, not from the clock, so a symbol that
+  stopped trading still shows its final week instead of an empty plot.
+- **`5Y` is a promise the vendor will not keep.** `getBatchBars` refuses more than 1,200 bars
+  ("The count ranges is 1 to 1200"), which is four years and ten months. Rather than relabel the
+  button or silently show less, the stats line prints the dates actually delivered —
+  `2021-11-30 → 2026-09-11 (1200 bars)` — so the shortfall is visible rather than implied. The
+  same line covers a recently listed symbol that has less history than any button promises.
+
+Short ranges being intraday has a consequence worth stating: they carry no corporate-action
+adjustment, because the adjuster works on session dates and a split factor applied within a single
+day means nothing. That is not a gap — the vendor's intraday series is already adjusted, and a
+split inside a one-week window should be *visible* rather than hidden. The basis label tells you
+which you are looking at either way, which is the same rule the rest of the price layer follows.
+
+**Live** shows the current session as a day trader reads it:
+[`IntradaySession`](src/main/java/dev/aperture/analysis/IntradaySession.java) over one-minute bars,
+with the last price as the headline, change against both the previous close and today's open,
+the session high and low, **VWAP** and whether price is above or below it, live bid/ask and spread
+in basis points, cumulative volume, and a meter showing where the last trade sits between the
+day's low and high — a price at 95% of its range is pressing the highs whatever the percentage
+change says. The chart draws VWAP and the previous close as labelled reference lines, both
+included in the y-scale so an overnight gap shows as a gap instead of being clipped to the edge.
+
+Three things that are easy to get wrong here:
+
+- **The vendor's intraday window spans several days.** Taking it at face value makes the "day
+  range" a two-day range and reports yesterday's open as today's. The bars are trimmed to the
+  latest session date before anything is computed.
+- **VWAP weights the typical price `(H+L+C)/3` by volume, not the close.** A bar that opened low
+  and closed high did not trade all of its volume at the close, and bars do not carry equal
+  volume — averaging closes gives a different, wrong number.
+- **An absent previous close is left absent.** Treating it as zero would print a change of +333
+  and a percentage that is either infinite or a lie. The open-relative figures still render, so
+  the panel is never blank.
+
+The two modes poll differently because their data does: a year of daily bars is fetched once and
+is then finished, while a session has to keep re-reading itself. Live refreshes every fifteen
+seconds, and stops when it should — when the tab is hidden, and when the session shown is not
+today's. An event contract that settled in July cannot change, so the view says
+`session closed — not updating` and stops asking.
+
 ### Corporate actions are an equity concept
 
 The corporate-actions panel appears only for accounts that trade stocks and ETFs. A crypto pair
@@ -472,7 +532,7 @@ Verified against a live account on 2026-09-11. Several of these contradict the p
 ## Tests
 
 ```bash
-mvn test        # 171 tests
+mvn test        # 201 tests
 ```
 
 The ones worth reading:
@@ -503,6 +563,14 @@ The ones worth reading:
 - [`OrderSubmissionGateTest`](src/test/java/dev/aperture/trading/OrderSubmissionGateTest.java) —
   every case asserts submission is *refused*, because a gate is only worth having if it has been
   shown to shut.
+- [`ChartRangeTest`](src/test/java/dev/aperture/analysis/ChartRangeTest.java) — that a range button
+  delivers the window it names. Covers the intraday trim against the real failure (a `1W` button
+  showing eleven days), that the window is measured from the last bar rather than the clock, and
+  that a series shorter than the window survives instead of being cut to nothing.
+- [`IntradaySessionTest`](src/test/java/dev/aperture/analysis/IntradaySessionTest.java) — built on
+  a series that deliberately spans two sessions, at yesterday's prices nothing like today's, so
+  any leakage from the vendor's rolling window is unmistakable. Pins the VWAP to a figure that can
+  be checked by hand, and asserts an absent previous close stays absent.
 
 ---
 
