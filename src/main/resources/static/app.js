@@ -514,6 +514,7 @@ function applyUniverse(account) {
   if (!account || !account.universe || account.universe === state.universe) return;
   state.universe = account.universe;
   renderAskSuggestions(account.universe);
+  applyCorporateActionsVisibility();
   $('watchlistUniverse').textContent = account.universeLabel || '';
   $('quoteBody').innerHTML = '<tr class="empty"><td colspan="9">Loading…</td></tr>';
   state.quotes.clear();
@@ -573,7 +574,20 @@ async function loadAccountDetail() {
 
 /* ── corporate actions ───────────────────────────────────────────── */
 
+/*
+ * Corporate actions apply to equities and nothing else: a crypto pair does not split, an event
+ * contract settles rather than paying a dividend, and a futures contract rolls. Showing an
+ * equities dividend calendar to a crypto account is not just noise, it implies the account holds
+ * something it cannot.
+ */
+function showsCorporateActions() {
+  return (state.universe || 'EQUITY') === 'EQUITY';
+}
+
 async function loadActions() {
+  if (!showsCorporateActions()) {
+    return;
+  }
   const actions = await getJson('/api/market/actions');
   const body = $('actionBody');
   if (!actions || !actions.length) {
@@ -756,6 +770,21 @@ function renderGroupChips(groups) {
 }
 
 const escapeAttr = (value) => String(value).replace(/"/g, '&quot;');
+
+/**
+ * Shows the corporate-actions panel only for accounts that trade equities.
+ *
+ * <p>The body class reflows the grid so the analyst spans the full width rather than sitting
+ * beside an empty column where the panel used to be.
+ */
+function applyCorporateActionsVisibility() {
+  const show = showsCorporateActions();
+  document.querySelector('.actions-panel').hidden = !show;
+  document.body.classList.toggle('no-corporate-actions', !show);
+  if (show) {
+    loadActions();
+  }
+}
 
 /* ── analyst ─────────────────────────────────────────────────────── */
 
@@ -1128,6 +1157,7 @@ function start() {
   setInterval(tickClock, 1000);
 
   renderAskSuggestions(state.universe || 'EQUITY');
+  applyCorporateActionsVisibility();
   refreshStatus();
   loadOrderCapability();
   loadQuotes();

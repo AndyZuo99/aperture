@@ -140,10 +140,26 @@ select:disabled { color: var(--text-faint); }
 .actions-panel { grid-area: actions; }
 .analyst-panel { grid-area: analyst; }
 
+/*
+ * Accounts that do not trade equities have no corporate-actions panel, so the analyst takes the
+ * whole row rather than leaving a hole where the panel was.
+ */
+body.no-corporate-actions .layout {
+  grid-template-areas:
+    "watchlist chart"
+    "watchlist account"
+    "universe  universe"
+    "analyst   analyst";
+}
+
 @media (max-width: 1100px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "watchlist" "chart" "account" "universe" "actions" "analyst";
+  }
+
+  body.no-corporate-actions .layout {
+    grid-template-areas: "watchlist" "chart" "account" "universe" "analyst";
   }
 }
 

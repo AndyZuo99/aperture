@@ -248,6 +248,14 @@ they have no corporate actions to restate. The chart's return and volatility are
 bars actually displayed rather than from stored history, which is what makes them appear for a
 searched symbol at all. Futures charts refuse, for the same entitlement reason as everything else.
 
+### Corporate actions are an equity concept
+
+The corporate-actions panel appears only for accounts that trade stocks and ETFs. A crypto pair
+does not split, an event contract settles rather than paying a dividend, and a futures contract
+rolls — so showing an equity dividend calendar to a crypto account is not merely noise, it implies
+the account holds something it cannot. The panel is hidden, the fetch is skipped, and the layout
+reflows so the analyst takes the full width rather than sitting beside the gap.
+
 ### Event contracts trade as two instruments
 
 A binary event market is not one instrument with one price. *"Will the Federal Reserve hike by more
