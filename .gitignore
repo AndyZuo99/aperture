@@ -12,8 +12,17 @@ conf/
 .env
 *.pem
 
+# Run artefacts. `nohup java -jar ...` from the project root lands nohup.out here.
+*.log
+logs/
+nohup.out
+
 # Editor and OS noise
 .idea/
 *.iml
 .vscode/
 .DS_Store
+._*
+
+# iCloud placeholders: ~/Documents is synced, and an evicted file becomes a .icloud stub.
+*.icloud

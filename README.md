@@ -109,8 +109,8 @@ how much better than the limit the order actually executed.
 **Price improvement inverts with the side.** A buy filled *below* its limit and a sell filled
 *above* it are both good, so positive always means in the trader's favour. A single signed "filled
 minus limit" would report one of two identical outcomes as a loss purely because of its direction.
-On the live account: 55 MRK asked at 145.19 and filled at 144.33 is +0.86 a share, +$47.30 on the
-order.
+From a live run: an order asking 145.19 and filling at 144.33 is +0.86 a share of improvement,
+positive because it was a buy.
 
 **Resting exits are counted and flagged.** An open GTC sell is what makes a filled entry a *managed*
 position rather than an open-ended one, and its absence is invisible in a positions panel — the
@@ -701,6 +701,21 @@ The ones worth reading:
   repeating pagination key ends the walk instead of collecting the same page a hundred times.
 
 ---
+
+## Disclaimer
+
+This is a personal portfolio project, not a product and not a service.
+
+- **Not investment advice.** The analyst is a language model reading price history. Its
+  recommendations are not research, not a forecast, and carry no expectation of profit. The hit
+  rates it reports are backward-looking statistics, and the README's own
+  [limitations](#limitations) say where they stop being meaningful.
+- **Not affiliated with, endorsed by, or supported by Webull or Anthropic.** It is a third-party
+  client of their public APIs, subject to their terms, not mine.
+- **It can place real orders with real money.** Production submission is off by default and needs
+  two deliberate configuration changes to enable ([Production stays gated](#production-stays-gated)).
+  Anyone who enables it owns what happens next.
+- **No warranty.** See [LICENSE](LICENSE). Run it against paper trading first.
 
 ## Limitations
 

@@ -19,7 +19,7 @@ import org.junit.jupiter.params.provider.ValueSource;
  */
 class RunContextTest {
 
-    private static final String RUN_ACCOUNT = "R7IGRPEHSQLL30L4JQ6R26IBSB";
+    private static final String RUN_ACCOUNT = "ACCT0MARGIN0EXAMPLE0000001";
 
     @ParameterizedTest
     @NullAndEmptySource
@@ -35,8 +35,8 @@ class RunContextTest {
     void explicitArgumentWins() {
         // Asking about a different account is legitimate - "what could my crypto account trade" -
         // so the run's account is a default, not an override.
-        assertThat(MarketAnalyst.orRunContext("X819410937089712128", RUN_ACCOUNT))
-                .isEqualTo("X819410937089712128");
+        assertThat(MarketAnalyst.orRunContext("ACCT0CRYPTO0EXAMPLE0000002", RUN_ACCOUNT))
+                .isEqualTo("ACCT0CRYPTO0EXAMPLE0000002");
     }
 
     @Test
